@@ -91,3 +91,10 @@ export class Printer {
     }
   }
 }
+
+export const THANKS_MESSAGE =
+  "\nThanks for using killx..!\nFor more visit - killx.js.org";
+
+export function printThanks(): void {
+  console.log(THANKS_MESSAGE);
+}

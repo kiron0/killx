@@ -7,7 +7,9 @@ export type CliCommand =
   | "process"
   | "dev"
   | "wait"
-  | "watch";
+  | "watch"
+  | "check-update"
+  | "update";
 
 export interface ParsedArgs {
   command?: CliCommand | undefined;
@@ -24,6 +26,8 @@ export interface ParsedArgs {
     kill?: boolean | undefined;
     help?: boolean | undefined;
     version?: boolean | undefined;
+    checkUpdate?: boolean | undefined;
+    noUpdateCheck?: boolean | undefined;
   };
 }
 
@@ -41,6 +45,8 @@ const COMMAND_ALIASES: Record<string, CliCommand> = {
   dev: "dev",
   wait: "wait",
   watch: "watch",
+  "check-update": "check-update",
+  update: "update",
 };
 
 export function parseCliArgs(argv: readonly string[]): ParsedArgs {
@@ -64,6 +70,10 @@ export function parseCliArgs(argv: readonly string[]): ParsedArgs {
       flags.help = true;
     } else if (arg === "--version") {
       flags.version = true;
+    } else if (arg === "--check-update") {
+      flags.checkUpdate = true;
+    } else if (arg === "--no-update-check") {
+      flags.noUpdateCheck = true;
     } else if (arg === "--occupied") {
       flags.occupied = true;
     } else if (arg === "--kill") {

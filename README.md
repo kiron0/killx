@@ -27,6 +27,9 @@ Requires Node.js 20+.
 ## Common Commands
 
 ```bash
+# Interactive port selection (Clack UI)
+killx
+
 # Graceful termination (SIGTERM)
 killx 3000
 
@@ -43,6 +46,10 @@ killx kill 3000-3010 --yes
 # Check port availability
 killx check 3000
 killx check 3000 --json
+
+# Check & install updates
+killx check-update
+killx update
 
 # Inspect listener metadata
 killx info 3000
