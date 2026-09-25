@@ -2,113 +2,93 @@
 
 > Find and kill the process using a port.
 
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![npm version](https://img.shields.io/npm/v/killx.svg)](https://www.npmjs.com/package/killx)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Docs](https://img.shields.io/badge/docs-killx.js.org-blue)](https://killx.js.org)
 
-```console
-$ killx 3000
-✓ Killed node (PID 18342) on :3000
-```
+Full documentation and guides available at **[killx.js.org](https://killx.js.org)**.
 
-## Install
+---
+
+## Quick Install
 
 ```bash
 npm install -g killx
 ```
 
-Or run directly with `npx`:
+Or run without install:
 
 ```bash
 npx killx 3000
 ```
 
-## Use
+Requires Node.js 20+.
+
+## Common Commands
 
 ```bash
-killx 3000                 # graceful kill (SIGTERM)
-killx 3000 --force         # force kill (SIGKILL)
-killx 3000 --timeout 3     # force after 3 seconds
-killx 3000 5173 8080       # multiple ports
-killx kill 3000-3010       # port range
-```
+# Graceful termination (SIGTERM)
+killx 3000
 
-Inspect ports:
+# Force termination (SIGKILL)
+killx 3000 --force
 
-```bash
-killx info 3000
+# Timed escalation (SIGTERM -> SIGKILL after 3s)
+killx 3000 --timeout 3
+
+# Multiple ports & ranges
+killx 3000 5173 8080
+killx kill 3000-3010 --yes
+
+# Check port availability
 killx check 3000
+killx check 3000 --json
+
+# Inspect listener metadata
+killx info 3000
 killx list
 killx list 3000-4000
-killx free 3000
-```
 
-Find processes:
+# Find next available port
+PORT=$(killx free 3000)
 
-```bash
+# Process search & stop dev servers
 killx ps node
-killx ps node --kill
+killx ps node --kill --yes
 killx dev
 ```
 
-Wait or watch:
+## Features
 
-```bash
-killx wait 3000
-killx wait 3000 --occupied
-killx watch 3000
+- **Safe termination**: sends `SIGTERM` by default; escalates to `SIGKILL` only with `--force` or `--timeout`.
+- **Destructive safety**: requires confirmation for port ranges, multiple listeners, or privileged processes (skip with `--yes`). PID 1 protected.
+- **Port utilities**: inspect listeners (`info`), check availability (`check`), list TCP sockets (`list`), find open ports (`free`).
+- **Dev-first**: instant cleanup of common development servers with `killx dev` (Node, Vite, Next.js, Python, Rails, PHP, Java).
+- **Automation-friendly**: clean JSON output with `--json`, quiet exit codes with `--quiet`.
+- **Cross-platform**: macOS (`lsof`), Linux (`lsof` / `ss`), Windows (`netstat`, PowerShell, `taskkill`).
+
+## Programmatic API
+
+```ts
+import { createPlatformProvider, terminateProcess, findFreePort } from "killx";
+
+const provider = createPlatformProvider();
+const listeners = await provider.find(3000);
+
+for (const proc of listeners) {
+  await terminateProcess(proc.pid, { force: false });
+}
+
+const nextFree = await findFreePort(3000);
 ```
 
-## Commands
+## Documentation
 
-| Command                | Description                     |
-| ---------------------- | ------------------------------- |
-| `killx <port...>`      | Kill listeners                  |
-| `killx kill <port...>` | Explicit kill command           |
-| `killx info <port>`    | Show listener details           |
-| `killx check <port>`   | Check port availability         |
-| `killx list [range]`   | List listening ports            |
-| `killx free [port]`    | Find a free port                |
-| `killx ps [query]`     | Search processes                |
-| `killx dev`            | Stop common development servers |
-| `killx wait <port>`    | Wait for port state             |
-| `killx watch <port>`   | Watch port changes              |
-
-Aliases: `i` (`info`), `c` (`check`), `ls` (`list`), and `ps` (`process`).
-
-## Safety
-
-`killx` sends `SIGTERM` by default. `--force` sends `SIGKILL`.
-
-Ranges, multiple matches, and protected processes require confirmation. Use `--yes` to skip confirmation.
-
-PID 1 is never terminated.
-
-## Scripts & CI
-
-```bash
-killx info 3000 --json
-killx list --json
-killx 3000 --quiet
-PORT=$(killx free 3000)
-```
-
-Exit codes:
-
-| Code | Meaning            |
-| ---: | ------------------ |
-|  `0` | Success            |
-|  `1` | General error      |
-|  `2` | Invalid arguments  |
-|  `3` | No process found   |
-|  `4` | Permission denied  |
-|  `5` | Termination failed |
-
-## Platforms
-
-- macOS: `lsof`
-- Linux: `lsof` or `ss`
-- Windows: `netstat`, PowerShell, and `taskkill`
-
-TCP listeners are supported. UDP is not supported.
+- [Getting Started](https://killx.js.org/docs)
+- [CLI Reference](https://killx.js.org/docs/cli)
+- [Platform Support](https://killx.js.org/docs/platforms)
+- [Exit Codes & Scripting](https://killx.js.org/docs/scripts)
+- [Node API Reference](https://killx.js.org/docs/api)
 
 ## License
 

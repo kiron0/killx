@@ -33,7 +33,7 @@
   "bugs": {
     "url": "https://github.com/kiron0/killx/issues"
   },
-  "homepage": "https://github.com/kiron0/killx#readme",
+  "homepage": "https://killx.js.org",
   "engines": {
     "node": ">=20"
   },
