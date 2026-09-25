@@ -35,11 +35,16 @@ jobs:
           fetch-depth: 0
           ref: ${{ env.TARGET_SHA }}
 
+      - name: Setup Bun
+        if: steps.release.outputs.exists == 'false'
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
           node-version: 22
-          cache: npm
 
       - name: Resolve release metadata
         id: meta
@@ -73,7 +78,7 @@ jobs:
 
       - name: Install locked dependencies
         if: steps.release.outputs.exists == 'false'
-        run: npm ci
+        run: bun install --frozen-lockfile
 
       - name: Validate package
         if: steps.release.outputs.exists == 'false'
