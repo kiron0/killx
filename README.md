@@ -67,28 +67,12 @@ killx dev
 - **Automation-friendly**: clean JSON output with `--json`, quiet exit codes with `--quiet`.
 - **Cross-platform**: macOS (`lsof`), Linux (`lsof` / `ss`), Windows (`netstat`, PowerShell, `taskkill`).
 
-## Programmatic API
-
-```ts
-import { createPlatformProvider, terminateProcess, findFreePort } from "killx";
-
-const provider = createPlatformProvider();
-const listeners = await provider.find(3000);
-
-for (const proc of listeners) {
-  await terminateProcess(proc.pid, { force: false });
-}
-
-const nextFree = await findFreePort(3000);
-```
-
 ## Documentation
 
 - [Getting Started](https://killx.js.org/docs)
 - [CLI Reference](https://killx.js.org/docs/cli)
 - [Platform Support](https://killx.js.org/docs/platforms)
 - [Exit Codes & Scripting](https://killx.js.org/docs/scripts)
-- [Node API Reference](https://killx.js.org/docs/api)
 
 ## License
 
