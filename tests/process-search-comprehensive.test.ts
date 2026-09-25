@@ -14,9 +14,7 @@ describe("searchProcesses on Darwin/Linux (ps)", () => {
     "  999 only three fields",
   ].join("\n");
 
-  const psRunner: CommandRunner = async (_cmd, _args) => {
-    return samplePsOutput;
-  };
+  const psRunner: CommandRunner = () => Promise.resolve(samplePsOutput);
 
   it("returns all processes when query is empty", async () => {
     const results = await searchProcesses("", psRunner);
@@ -87,19 +85,20 @@ describe("searchProcesses on Windows (powershell CIM)", () => {
     const originalPlatform = process.platform;
     Object.defineProperty(process, "platform", { value: "win32" });
 
-    const winRunner: CommandRunner = async () => {
-      return JSON.stringify([
-        {
-          ProcessId: 1000,
-          CommandLine: "C:\\Program Files\\nodejs\\node.exe server.js",
-        },
-        {
-          ProcessId: 2000,
-          CommandLine: "C:\\Python310\\python.exe -m http.server 8000",
-        },
-        { ProcessId: 3000, CommandLine: "C:\\Windows\\system32\\cmd.exe" },
-      ]);
-    };
+    const winRunner: CommandRunner = () =>
+      Promise.resolve(
+        JSON.stringify([
+          {
+            ProcessId: 1000,
+            CommandLine: "C:\\Program Files\\nodejs\\node.exe server.js",
+          },
+          {
+            ProcessId: 2000,
+            CommandLine: "C:\\Python310\\python.exe -m http.server 8000",
+          },
+          { ProcessId: 3000, CommandLine: "C:\\Windows\\system32\\cmd.exe" },
+        ]),
+      );
 
     try {
       const all = await searchProcesses("", winRunner);
@@ -119,9 +118,10 @@ describe("searchProcesses on Windows (powershell CIM)", () => {
     const originalPlatform = process.platform;
     Object.defineProperty(process, "platform", { value: "win32" });
 
-    const winRunner: CommandRunner = async () => {
-      return JSON.stringify({ ProcessId: 7777, CommandLine: "node index.js" });
-    };
+    const winRunner: CommandRunner = () =>
+      Promise.resolve(
+        JSON.stringify({ ProcessId: 7777, CommandLine: "node index.js" }),
+      );
 
     try {
       const results = await searchProcesses("node", winRunner);
@@ -137,9 +137,8 @@ describe("searchProcesses on Windows (powershell CIM)", () => {
     const originalPlatform = process.platform;
     Object.defineProperty(process, "platform", { value: "win32" });
 
-    const brokenRunner: CommandRunner = async () => {
-      throw new Error("powershell execution restricted");
-    };
+    const brokenRunner: CommandRunner = () =>
+      Promise.reject(new Error("powershell execution restricted"));
 
     try {
       const results = await searchProcesses("", brokenRunner);
@@ -153,12 +152,13 @@ describe("searchProcesses on Windows (powershell CIM)", () => {
     const originalPlatform = process.platform;
     Object.defineProperty(process, "platform", { value: "win32" });
 
-    const winRunner: CommandRunner = async () => {
-      return JSON.stringify([
-        { ProcessId: 8888, CommandLine: null },
-        { ProcessId: 8889 },
-      ]);
-    };
+    const winRunner: CommandRunner = () =>
+      Promise.resolve(
+        JSON.stringify([
+          { ProcessId: 8888, CommandLine: null },
+          { ProcessId: 8889 },
+        ]),
+      );
 
     try {
       const results = await searchProcesses("", winRunner);

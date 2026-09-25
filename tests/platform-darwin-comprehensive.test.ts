@@ -6,12 +6,12 @@ describe("DarwinProvider.list", () => {
   it("invokes lsof with correct arguments", async () => {
     const calls: Array<{ cmd: string; args: readonly string[] }> = [];
 
-    const mockRunner: CommandRunner = async (cmd, args) => {
+    const mockRunner: CommandRunner = (cmd, args) => {
       calls.push({ cmd, args });
       if (cmd === "lsof") {
-        return "p100\ncnode\nLuser\nn*:3000 (LISTEN)\n";
+        return Promise.resolve("p100\ncnode\nLuser\nn*:3000 (LISTEN)\n");
       }
-      return "node server.js";
+      return Promise.resolve("node server.js");
     };
 
     const provider = new DarwinProvider(mockRunner);
@@ -30,10 +30,10 @@ describe("DarwinProvider.list", () => {
   });
 
   it("returns empty array when lsof exits with code 1 (no listening processes)", async () => {
-    const mockRunner: CommandRunner = async () => {
+    const mockRunner: CommandRunner = () => {
       const err = new Error("Command failed: lsof");
       (err as { code?: number }).code = 1;
-      throw err;
+      return Promise.reject(err);
     };
 
     const provider = new DarwinProvider(mockRunner);
@@ -42,10 +42,10 @@ describe("DarwinProvider.list", () => {
   });
 
   it("rethrows error when lsof exits with code > 1", async () => {
-    const mockRunner: CommandRunner = async () => {
+    const mockRunner: CommandRunner = () => {
       const err = new Error("Command failed: lsof permission denied");
       (err as { code?: number }).code = 2;
-      throw err;
+      return Promise.reject(err);
     };
 
     const provider = new DarwinProvider(mockRunner);
@@ -53,36 +53,37 @@ describe("DarwinProvider.list", () => {
   });
 
   it("rethrows non-object error from runner", async () => {
-    const mockRunner: CommandRunner = async () => {
-      throw "fatal crash";
-    };
+    // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
+    const mockRunner: CommandRunner = () => Promise.reject("fatal crash");
 
     const provider = new DarwinProvider(mockRunner);
     await expect(provider.list()).rejects.toBe("fatal crash");
   });
 
   it("parses multiple processes and sorts by port and pid", async () => {
-    const mockRunner: CommandRunner = async (cmd, args) => {
+    const mockRunner: CommandRunner = (cmd, args) => {
       if (cmd === "lsof") {
-        return [
-          "p50",
-          "cvite",
-          "Ldev",
-          "n*:5173 (LISTEN)",
-          "p40",
-          "cnode",
-          "Ldev",
-          "n*:3000 (LISTEN)",
-          "p30",
-          "cpython",
-          "Ldev",
-          "n*:3000 (LISTEN)",
-        ].join("\n");
+        return Promise.resolve(
+          [
+            "p50",
+            "cvite",
+            "Ldev",
+            "n*:5173 (LISTEN)",
+            "p40",
+            "cnode",
+            "Ldev",
+            "n*:3000 (LISTEN)",
+            "p30",
+            "cpython",
+            "Ldev",
+            "n*:3000 (LISTEN)",
+          ].join("\n"),
+        );
       }
       if (cmd === "ps") {
-        return `cmd-${args[1]}`;
+        return Promise.resolve(`cmd-${args[1]}`);
       }
-      return "";
+      return Promise.resolve("");
     };
 
     const provider = new DarwinProvider(mockRunner);
@@ -117,9 +118,9 @@ describe("DarwinProvider.find", () => {
     "n*:80 (LISTEN)",
   ].join("\n");
 
-  const runner: CommandRunner = async (cmd, args) => {
-    if (cmd === "lsof") return sampleOutput;
-    return `cmd-${args[1]}`;
+  const runner: CommandRunner = (cmd, args) => {
+    if (cmd === "lsof") return Promise.resolve(sampleOutput);
+    return Promise.resolve(`cmd-${args[1]}`);
   };
 
   it("finds processes for an existing port", async () => {

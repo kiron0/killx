@@ -164,24 +164,23 @@ describe("parseLsof", () => {
 
 describe("enrichCommandLine", () => {
   it("returns trimmed output from ps command", async () => {
-    const mockRunner: CommandRunner = async (_cmd, args) => {
+    const mockRunner: CommandRunner = (_cmd, args) => {
       expect(args).toEqual(["-p", "123", "-o", "command="]);
-      return "  node server.js --port 3000 \n";
+      return Promise.resolve("  node server.js --port 3000 \n");
     };
     const cmd = await enrichCommandLine(mockRunner, 123, "node");
     expect(cmd).toBe("node server.js --port 3000");
   });
 
   it("returns fallback if ps returns empty string", async () => {
-    const mockRunner: CommandRunner = async () => "   \n";
+    const mockRunner: CommandRunner = () => Promise.resolve("   \n");
     const cmd = await enrichCommandLine(mockRunner, 456, "default-fallback");
     expect(cmd).toBe("default-fallback");
   });
 
   it("returns fallback if ps command fails", async () => {
-    const mockRunner: CommandRunner = async () => {
-      throw new Error("process died");
-    };
+    const mockRunner: CommandRunner = () =>
+      Promise.reject(new Error("process died"));
     const cmd = await enrichCommandLine(mockRunner, 789, "node");
     expect(cmd).toBe("node");
   });
@@ -201,9 +200,9 @@ describe("parseLsofWithCommand", () => {
       "n*:3000 (LISTEN)",
     ].join("\n");
 
-    const mockRunner: CommandRunner = async (_cmd, args) => {
+    const mockRunner: CommandRunner = (_cmd, args) => {
       const pid = args[1];
-      return `full-command-for-${pid}`;
+      return Promise.resolve(`full-command-for-${pid}`);
     };
 
     const results = await parseLsofWithCommand(raw, mockRunner);
@@ -223,7 +222,7 @@ describe("parseLsofWithCommand", () => {
   });
 
   it("returns empty array when output has no listening ports", async () => {
-    const mockRunner: CommandRunner = async () => "";
+    const mockRunner: CommandRunner = () => Promise.resolve("");
     const results = await parseLsofWithCommand("", mockRunner);
     expect(results).toEqual([]);
   });

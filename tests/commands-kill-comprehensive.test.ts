@@ -248,7 +248,7 @@ describe("runKill command", () => {
       printer,
     });
 
-    const parsed = JSON.parse(lines.join(""));
+    const parsed = JSON.parse(lines.join("")) as KillResult;
     expect(parsed).toEqual({
       success: true,
       port: 8080,
@@ -294,11 +294,11 @@ describe("runKill command", () => {
       printer,
     });
 
-    const parsed = JSON.parse(lines.join(""));
+    const parsed = JSON.parse(lines.join("")) as KillResult[];
     expect(Array.isArray(parsed)).toBe(true);
     expect(parsed).toHaveLength(2);
-    expect(parsed[0].pid).toBe(4001);
-    expect(parsed[1].pid).toBe(4002);
+    expect(parsed[0]?.pid).toBe(4001);
+    expect(parsed[1]?.pid).toBe(4002);
     terminateSpy.mockRestore();
   });
 

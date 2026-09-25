@@ -14,22 +14,22 @@ describe("WindowsProvider.list", () => {
     "  UDP    0.0.0.0:5353           *:*                                    555",
   ].join("\n");
 
-  const runner: CommandRunner = async (cmd, args) => {
-    if (cmd === "netstat") return sampleNetstat;
+  const runner: CommandRunner = (cmd, args) => {
+    if (cmd === "netstat") return Promise.resolve(sampleNetstat);
     if (cmd === "powershell") {
       const script = args[2] ?? "";
       if (script.includes("1234")) {
-        return "node.exe\nnode server.js\n";
+        return Promise.resolve("node.exe\nnode server.js\n");
       }
       if (script.includes("5678")) {
-        return "java.exe\njava -jar app.jar\n";
+        return Promise.resolve("java.exe\njava -jar app.jar\n");
       }
       if (script.includes("9012")) {
-        return "vite.exe\nvite\n";
+        return Promise.resolve("vite.exe\nvite\n");
       }
-      return "";
+      return Promise.resolve("");
     }
-    return "";
+    return Promise.resolve("");
   };
 
   it("filters LISTENING tcp ports and parses netstat correctly", async () => {
@@ -56,10 +56,11 @@ describe("WindowsProvider.list", () => {
 
   it("strips .exe extension from process name", async () => {
     const mockNetstat = "  TCP    0.0.0.0:4000  0.0.0.0:0  LISTENING  4444\n";
-    const customRunner: CommandRunner = async (cmd) => {
-      if (cmd === "netstat") return mockNetstat;
-      if (cmd === "powershell") return "python.exe\npython main.py";
-      return "";
+    const customRunner: CommandRunner = (cmd) => {
+      if (cmd === "netstat") return Promise.resolve(mockNetstat);
+      if (cmd === "powershell")
+        return Promise.resolve("python.exe\npython main.py");
+      return Promise.resolve("");
     };
     const provider = new WindowsProvider(customRunner);
     const results = await provider.list();
@@ -68,10 +69,11 @@ describe("WindowsProvider.list", () => {
 
   it("keeps process name intact if not ending with .exe", async () => {
     const mockNetstat = "  TCP    0.0.0.0:4000  0.0.0.0:0  LISTENING  4444\n";
-    const customRunner: CommandRunner = async (cmd) => {
-      if (cmd === "netstat") return mockNetstat;
-      if (cmd === "powershell") return "custom_daemon\ncustom_daemon --arg";
-      return "";
+    const customRunner: CommandRunner = (cmd) => {
+      if (cmd === "netstat") return Promise.resolve(mockNetstat);
+      if (cmd === "powershell")
+        return Promise.resolve("custom_daemon\ncustom_daemon --arg");
+      return Promise.resolve("");
     };
     const provider = new WindowsProvider(customRunner);
     const results = await provider.list();
@@ -80,11 +82,11 @@ describe("WindowsProvider.list", () => {
 
   it("handles powershell metadata failure gracefully", async () => {
     const mockNetstat = "  TCP    0.0.0.0:4000  0.0.0.0:0  LISTENING  4444\n";
-    const brokenRunner: CommandRunner = async (cmd) => {
-      if (cmd === "netstat") return mockNetstat;
+    const brokenRunner: CommandRunner = (cmd) => {
+      if (cmd === "netstat") return Promise.resolve(mockNetstat);
       if (cmd === "powershell")
-        throw new Error("powershell execution disabled");
-      return "";
+        return Promise.reject(new Error("powershell execution disabled"));
+      return Promise.resolve("");
     };
     const provider = new WindowsProvider(brokenRunner);
     const results = await provider.list();
@@ -98,9 +100,9 @@ describe("WindowsProvider.list", () => {
       "  TCP    0.0.0.0:3000  0.0.0.0:0  LISTENING  100",
       "  TCP    127.0.0.1:3000  0.0.0.0:0  LISTENING  100",
     ].join("\n");
-    const customRunner: CommandRunner = async (cmd) => {
-      if (cmd === "netstat") return duplicateNetstat;
-      return "node\n";
+    const customRunner: CommandRunner = (cmd) => {
+      if (cmd === "netstat") return Promise.resolve(duplicateNetstat);
+      return Promise.resolve("node\n");
     };
     const provider = new WindowsProvider(customRunner);
     const results = await provider.list();
@@ -108,9 +110,8 @@ describe("WindowsProvider.list", () => {
   });
 
   it("throws wrapped error if netstat fails", async () => {
-    const failingRunner: CommandRunner = async () => {
-      throw new Error("netstat not recognized");
-    };
+    const failingRunner: CommandRunner = () =>
+      Promise.reject(new Error("netstat not recognized"));
     const provider = new WindowsProvider(failingRunner);
     await expect(provider.list()).rejects.toThrow(
       "inspect listening ports: Error: netstat not recognized",
@@ -125,9 +126,9 @@ describe("WindowsProvider.find", () => {
     "  TCP    0.0.0.0:8000  0.0.0.0:0  LISTENING  201",
   ].join("\n");
 
-  const runner: CommandRunner = async (cmd) => {
-    if (cmd === "netstat") return netstatData;
-    return "app.exe\napp";
+  const runner: CommandRunner = (cmd) => {
+    if (cmd === "netstat") return Promise.resolve(netstatData);
+    return Promise.resolve("app.exe\napp");
   };
 
   it("finds multiple processes on the same port", async () => {

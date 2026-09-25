@@ -45,7 +45,7 @@ describe("runFreeCommand", () => {
     const lines: string[] = [];
     const printer = new Printer({ json: true, writer: (s) => lines.push(s) });
     await runFreeCommand("50000", printer);
-    const parsed = JSON.parse(lines.join(""));
+    const parsed = JSON.parse(lines.join("")) as { port: number };
     expect(parsed.port).toBeGreaterThanOrEqual(50000);
   });
 
@@ -116,9 +116,9 @@ describe("runListCommand", () => {
     const printer = new Printer({ json: true, writer: (s) => lines.push(s) });
 
     await runListCommand("3000-4000", provider, printer);
-    const parsed = JSON.parse(lines.join(""));
+    const parsed = JSON.parse(lines.join("")) as ProcessInfo[];
     expect(parsed).toHaveLength(1);
-    expect(parsed[0].port).toBe(3000);
+    expect(parsed[0]?.port).toBe(3000);
   });
 });
 
@@ -164,9 +164,9 @@ describe("runProcessCommand", () => {
     const printer = new Printer({ json: true, writer: (s) => lines.push(s) });
     await runProcessCommand({ query: "python" }, printer);
 
-    const parsed = JSON.parse(lines.join(""));
+    const parsed = JSON.parse(lines.join("")) as Array<{ pid: number }>;
     expect(parsed).toHaveLength(1);
-    expect(parsed[0].pid).toBe(200);
+    expect(parsed[0]?.pid).toBe(200);
     searchSpy.mockRestore();
   });
 

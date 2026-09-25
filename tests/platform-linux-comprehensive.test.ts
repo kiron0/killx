@@ -6,10 +6,10 @@ describe("LinuxProvider with lsof success", () => {
   it("uses lsof when available and enriches processes", async () => {
     const lsofOutput = ["p100", "cnode", "Ldev", "n*:3000 (LISTEN)"].join("\n");
 
-    const mockRunner: CommandRunner = async (cmd, args) => {
-      if (cmd === "lsof") return lsofOutput;
-      if (cmd === "ps") return "node server.js";
-      throw new Error(`Unexpected command: ${cmd}`);
+    const mockRunner: CommandRunner = (cmd) => {
+      if (cmd === "lsof") return Promise.resolve(lsofOutput);
+      if (cmd === "ps") return Promise.resolve("node server.js");
+      return Promise.reject(new Error(`Unexpected command: ${cmd}`));
     };
 
     const provider = new LinuxProvider(mockRunner);
@@ -29,14 +29,16 @@ describe("LinuxProvider ss fallback", () => {
     `LISTEN 0 128 *:443 *:* users:(("nginx",pid=100,fd=5))`,
   ].join("\n");
 
-  const fallbackRunner: CommandRunner = async (cmd, args) => {
-    if (cmd === "lsof") throw new Error("lsof: command not found");
-    if (cmd === "ss") return ssSampleOutput;
+  const fallbackRunner: CommandRunner = (cmd, args) => {
+    if (cmd === "lsof")
+      return Promise.reject(new Error("lsof: command not found"));
+    if (cmd === "ss") return Promise.resolve(ssSampleOutput);
     if (cmd === "ps") {
-      if (args.includes("user=")) return "appuser";
-      if (args.includes("command=")) return `full-cmd-${args[1]}`;
+      if (args.includes("user=")) return Promise.resolve("appuser");
+      if (args.includes("command="))
+        return Promise.resolve(`full-cmd-${args[1]}`);
     }
-    return "";
+    return Promise.resolve("");
   };
 
   it("falls back to ss when lsof fails", async () => {
@@ -67,10 +69,10 @@ describe("LinuxProvider ss fallback", () => {
       'LISTEN 0 511 127.0.0.1:4000 users:(("valid",pid=222,fd=3))',
     ].join("\n");
 
-    const runner: CommandRunner = async (cmd) => {
-      if (cmd === "lsof") throw new Error("not found");
-      if (cmd === "ss") return malformedSs;
-      return "";
+    const runner: CommandRunner = (cmd) => {
+      if (cmd === "lsof") return Promise.reject(new Error("not found"));
+      if (cmd === "ss") return Promise.resolve(malformedSs);
+      return Promise.resolve("");
     };
 
     const provider = new LinuxProvider(runner);
@@ -81,12 +83,14 @@ describe("LinuxProvider ss fallback", () => {
   });
 
   it("handles ps failure when looking up user and command", async () => {
-    const runner: CommandRunner = async (cmd) => {
-      if (cmd === "lsof") throw new Error("not found");
+    const runner: CommandRunner = (cmd) => {
+      if (cmd === "lsof") return Promise.reject(new Error("not found"));
       if (cmd === "ss")
-        return `LISTEN 0 511 0.0.0.0:3000 0.0.0.0:* users:(("node",pid=123,fd=1))`;
-      if (cmd === "ps") throw new Error("ps restricted");
-      return "";
+        return Promise.resolve(
+          `LISTEN 0 511 0.0.0.0:3000 0.0.0.0:* users:(("node",pid=123,fd=1))`,
+        );
+      if (cmd === "ps") return Promise.reject(new Error("ps restricted"));
+      return Promise.resolve("");
     };
 
     const provider = new LinuxProvider(runner);
@@ -97,9 +101,8 @@ describe("LinuxProvider ss fallback", () => {
   });
 
   it("throws wrapped error if both lsof and ss fail", async () => {
-    const brokenRunner: CommandRunner = async () => {
-      throw new Error("subcommand failed");
-    };
+    const brokenRunner: CommandRunner = () =>
+      Promise.reject(new Error("subcommand failed"));
 
     const provider = new LinuxProvider(brokenRunner);
     await expect(provider.list()).rejects.toThrow(
@@ -115,10 +118,10 @@ describe("LinuxProvider.find", () => {
     `LISTEN 0 511 0.0.0.0:8080 0.0.0.0:* users:(("java",pid=20,fd=3))`,
   ].join("\n");
 
-  const runner: CommandRunner = async (cmd) => {
-    if (cmd === "lsof") throw new Error("no lsof");
-    if (cmd === "ss") return ssOutput;
-    return "";
+  const runner: CommandRunner = (cmd) => {
+    if (cmd === "lsof") return Promise.reject(new Error("no lsof"));
+    if (cmd === "ss") return Promise.resolve(ssOutput);
+    return Promise.resolve("");
   };
 
   it("finds multiple processes on port 3000", async () => {

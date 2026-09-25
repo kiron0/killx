@@ -67,10 +67,10 @@ describe("sendSignalWindows", () => {
   it("executes taskkill with /PID and /T without /F when force is false", async () => {
     let capturedCmd = "";
     let capturedArgs: readonly string[] = [];
-    const mockRunner: CommandRunner = async (cmd, args) => {
+    const mockRunner: CommandRunner = (cmd, args) => {
       capturedCmd = cmd;
       capturedArgs = args;
-      return "";
+      return Promise.resolve("");
     };
 
     await sendSignalWindows(5432, false, mockRunner);
@@ -81,10 +81,10 @@ describe("sendSignalWindows", () => {
   it("executes taskkill with /PID, /T and /F when force is true", async () => {
     let capturedCmd = "";
     let capturedArgs: readonly string[] = [];
-    const mockRunner: CommandRunner = async (cmd, args) => {
+    const mockRunner: CommandRunner = (cmd, args) => {
       capturedCmd = cmd;
       capturedArgs = args;
-      return "";
+      return Promise.resolve("");
     };
 
     await sendSignalWindows(5432, true, mockRunner);
@@ -249,9 +249,8 @@ describe("terminateProcess", () => {
       return true;
     });
 
-    const mockRunner: CommandRunner = async () => {
-      throw new Error("taskkill not accessible");
-    };
+    const mockRunner: CommandRunner = () =>
+      Promise.reject(new Error("taskkill not accessible"));
 
     try {
       const sig = await terminateProcess(50005, { timeoutMs: 0 }, mockRunner);
