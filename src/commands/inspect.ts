@@ -21,11 +21,7 @@ export async function runInfoCommand(
   }
 
   if (printer.json) {
-    if (matches.length === 1) {
-      printer.encode(matches[0]);
-    } else {
-      printer.encode(matches);
-    }
+    printer.encodeSingleOrList(matches);
     return;
   }
 

@@ -1,29 +1,21 @@
 import { defaultCommandRunner, type CommandRunner } from "./command";
-import {
-  enrichCommandLine,
-  parseLsofWithCommand,
-  portFromAddress,
-} from "./lsof";
-import type { PlatformProvider, ProcessInfo } from "../types";
+import { enrichCommandLine, queryListeningLsof, portFromAddress } from "./lsof";
+import type { ProcessInfo } from "../types";
+import { BasePlatformProvider } from "./base";
 
 const SS_PROCESS_REGEX = /users:\(\("([^"]+)",pid=([0-9]+)/;
 
-export class LinuxProvider implements PlatformProvider {
+export class LinuxProvider extends BasePlatformProvider {
   private readonly runner: CommandRunner;
 
   constructor(runner: CommandRunner = defaultCommandRunner) {
+    super();
     this.runner = runner;
   }
 
   async list(): Promise<ProcessInfo[]> {
     try {
-      const stdout = await this.runner("lsof", [
-        "-nP",
-        "-iTCP",
-        "-sTCP:LISTEN",
-        "-FpcLntT",
-      ]);
-      return await parseLsofWithCommand(stdout, this.runner);
+      return await queryListeningLsof(this.runner);
     } catch {
       return await this.listFallback();
     }
@@ -88,10 +80,5 @@ export class LinuxProvider implements PlatformProvider {
     } catch {
       return "";
     }
-  }
-
-  async find(port: number): Promise<ProcessInfo[]> {
-    const all = await this.list();
-    return all.filter((item) => item.port === port);
   }
 }

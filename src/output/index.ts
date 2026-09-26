@@ -32,6 +32,10 @@ export class Printer {
     this.writeOutput(JSON.stringify(value, null, 2) + "\n");
   }
 
+  encodeSingleOrList<T>(items: readonly T[]): void {
+    this.encode(items.length === 1 ? items[0] : items);
+  }
+
   line(message: string): void {
     if (this.quiet) return;
     this.writeOutput(`${message}\n`);

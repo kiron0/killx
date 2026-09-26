@@ -1,7 +1,10 @@
 import { DarwinProvider } from "./darwin";
 import { LinuxProvider } from "./linux";
 import { WindowsProvider } from "./windows";
+import { BasePlatformProvider } from "./base";
 import type { PlatformProvider } from "../types";
+
+export { BasePlatformProvider };
 
 export function createPlatformProvider(): PlatformProvider {
   switch (process.platform) {
@@ -19,6 +22,7 @@ export { defaultCommandRunner, type CommandRunner } from "./command";
 export {
   parseLsof,
   parseLsofWithCommand,
+  queryListeningLsof,
   portFromAddress,
   enrichCommandLine,
 } from "./lsof";

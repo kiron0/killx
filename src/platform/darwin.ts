@@ -1,23 +1,19 @@
 import { defaultCommandRunner, type CommandRunner } from "./command";
-import { parseLsofWithCommand } from "./lsof";
-import type { PlatformProvider, ProcessInfo } from "../types";
+import { queryListeningLsof } from "./lsof";
+import type { ProcessInfo } from "../types";
+import { BasePlatformProvider } from "./base";
 
-export class DarwinProvider implements PlatformProvider {
+export class DarwinProvider extends BasePlatformProvider {
   private readonly runner: CommandRunner;
 
   constructor(runner: CommandRunner = defaultCommandRunner) {
+    super();
     this.runner = runner;
   }
 
   async list(): Promise<ProcessInfo[]> {
     try {
-      const stdout = await this.runner("lsof", [
-        "-nP",
-        "-iTCP",
-        "-sTCP:LISTEN",
-        "-FpcLntT",
-      ]);
-      return await parseLsofWithCommand(stdout, this.runner);
+      return await queryListeningLsof(this.runner);
     } catch (error: unknown) {
       if (
         error &&
@@ -29,10 +25,5 @@ export class DarwinProvider implements PlatformProvider {
       }
       throw error;
     }
-  }
-
-  async find(port: number): Promise<ProcessInfo[]> {
-    const all = await this.list();
-    return all.filter((item) => item.port === port);
   }
 }

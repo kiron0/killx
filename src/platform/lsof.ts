@@ -105,3 +105,15 @@ export async function parseLsofWithCommand(
   );
   return enriched;
 }
+
+export async function queryListeningLsof(
+  runner: CommandRunner,
+): Promise<ProcessInfo[]> {
+  const stdout = await runner("lsof", [
+    "-nP",
+    "-iTCP",
+    "-sTCP:LISTEN",
+    "-FpcLntT",
+  ]);
+  return await parseLsofWithCommand(stdout, runner);
+}

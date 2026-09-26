@@ -75,13 +75,17 @@ export async function terminateProcess(
     }
   };
 
-  if (force) {
+  const forceKill = async (): Promise<SignalName> => {
     await killFn(true);
     const gone = await waitUntilGone(pid, 2000);
     if (!gone) {
       throw new Error("process is still running");
     }
     return "SIGKILL";
+  };
+
+  if (force) {
+    return await forceKill();
   }
 
   // Graceful termination
@@ -96,11 +100,5 @@ export async function terminateProcess(
     throw new Error("process is still running");
   }
 
-  // Escalate to force kill
-  await killFn(true);
-  const forceGone = await waitUntilGone(pid, 2000);
-  if (!forceGone) {
-    throw new Error("process is still running");
-  }
-  return "SIGKILL";
+  return await forceKill();
 }

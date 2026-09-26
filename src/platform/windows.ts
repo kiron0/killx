@@ -1,11 +1,13 @@
 import { defaultCommandRunner, type CommandRunner } from "./command";
 import { portFromAddress } from "./lsof";
-import type { PlatformProvider, ProcessInfo } from "../types";
+import type { ProcessInfo } from "../types";
+import { BasePlatformProvider } from "./base";
 
-export class WindowsProvider implements PlatformProvider {
+export class WindowsProvider extends BasePlatformProvider {
   private readonly runner: CommandRunner;
 
   constructor(runner: CommandRunner = defaultCommandRunner) {
+    super();
     this.runner = runner;
   }
 
@@ -87,10 +89,5 @@ export class WindowsProvider implements PlatformProvider {
     } catch {
       return { name: "unknown", command: "" };
     }
-  }
-
-  async find(port: number): Promise<ProcessInfo[]> {
-    const all = await this.list();
-    return all.filter((item) => item.port === port);
   }
 }

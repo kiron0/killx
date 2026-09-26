@@ -54,90 +54,129 @@ const COMMAND_ALIASES: Record<string, CliCommand> = {
   update: "update",
 };
 
+type BooleanFlagKey =
+  | "json"
+  | "quiet"
+  | "verbose"
+  | "force"
+  | "yes"
+  | "help"
+  | "version"
+  | "checkUpdate"
+  | "noUpdateCheck"
+  | "occupied"
+  | "kill"
+  | "noColor";
+
+const BOOLEAN_FLAGS: Record<string, BooleanFlagKey> = {
+  "--json": "json",
+  "-j": "json",
+  "--quiet": "quiet",
+  "-q": "quiet",
+  "--verbose": "verbose",
+  "-v": "verbose",
+  "--force": "force",
+  "-f": "force",
+  "--yes": "yes",
+  "-y": "yes",
+  "--help": "help",
+  "-h": "help",
+  "--version": "version",
+  "--check-update": "checkUpdate",
+  "--no-update-check": "noUpdateCheck",
+  "--occupied": "occupied",
+  "--kill": "kill",
+  "--no-color": "noColor",
+};
+
+function readOptionValue(
+  name: string,
+  arg: string,
+  argv: readonly string[],
+  cursor: { index: number },
+): string | undefined {
+  if (arg === `--${name}`) {
+    const next = argv[++cursor.index];
+    if (!next) {
+      throw new Error(`option '--${name}' requires a value`);
+    }
+    return next;
+  }
+  if (arg.startsWith(`--${name}=`)) {
+    const val = arg.slice(`--${name}=`.length);
+    if (!val) {
+      throw new Error(`option '--${name}' requires a value`);
+    }
+    return val;
+  }
+  return undefined;
+}
+
+function readNumericOption(
+  name: string,
+  arg: string,
+  argv: readonly string[],
+  cursor: { index: number },
+): number | undefined {
+  const isMatch = arg === `--${name}` || arg.startsWith(`--${name}=`);
+  if (!isMatch) return undefined;
+
+  let raw: string | undefined;
+  if (arg === `--${name}`) {
+    raw = argv[++cursor.index];
+  } else {
+    raw = arg.slice(`--${name}=`.length);
+  }
+
+  if (!raw || isNaN(Number(raw))) {
+    throw new Error(`option '--${name}' requires a numeric value`);
+  }
+  return Number(raw);
+}
+
 export function parseCliArgs(argv: readonly string[]): ParsedArgs {
   const flags: ParsedArgs["flags"] = {};
   const rawPositionals: string[] = [];
+  const cursor = { index: 0 };
 
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i]!;
+  for (; cursor.index < argv.length; cursor.index++) {
+    const arg = argv[cursor.index]!;
 
-    if (arg === "--json" || arg === "-j") {
-      flags.json = true;
-    } else if (arg === "--quiet" || arg === "-q") {
-      flags.quiet = true;
-    } else if (arg === "--verbose" || arg === "-v") {
-      flags.verbose = true;
-    } else if (arg === "--force" || arg === "-f") {
-      flags.force = true;
-    } else if (arg === "--yes" || arg === "-y") {
-      flags.yes = true;
-    } else if (arg === "--help" || arg === "-h") {
-      flags.help = true;
-    } else if (arg === "--version") {
-      flags.version = true;
-    } else if (arg === "--check-update") {
-      flags.checkUpdate = true;
-    } else if (arg === "--no-update-check") {
-      flags.noUpdateCheck = true;
-    } else if (arg === "--occupied") {
-      flags.occupied = true;
-    } else if (arg === "--kill") {
-      flags.kill = true;
-    } else if (arg === "--timeout") {
-      const next = argv[++i];
-      if (!next || isNaN(Number(next))) {
-        throw new Error("option '--timeout' requires a numeric value");
-      }
-      flags.timeout = Number(next);
-    } else if (arg.startsWith("--timeout=")) {
-      const val = arg.slice("--timeout=".length);
-      if (!val || isNaN(Number(val))) {
-        throw new Error("option '--timeout' requires a numeric value");
-      }
-      flags.timeout = Number(val);
-    } else if (arg === "--interval") {
-      const next = argv[++i];
-      if (!next || isNaN(Number(next))) {
-        throw new Error("option '--interval' requires a numeric value");
-      }
-      flags.interval = Number(next);
-    } else if (arg.startsWith("--interval=")) {
-      const val = arg.slice("--interval=".length);
-      if (!val || isNaN(Number(val))) {
-        throw new Error("option '--interval' requires a numeric value");
-      }
-      flags.interval = Number(val);
-    } else if (arg === "--no-color") {
-      flags.noColor = true;
-    } else if (arg === "--process") {
-      const next = argv[++i];
-      if (!next) {
-        throw new Error("option '--process' requires a value");
-      }
-      flags.process = next;
-    } else if (arg.startsWith("--process=")) {
-      const val = arg.slice("--process=".length);
-      if (!val) {
-        throw new Error("option '--process' requires a value");
-      }
-      flags.process = val;
-    } else if (arg === "--port") {
-      const next = argv[++i];
-      if (!next || isNaN(Number(next))) {
-        throw new Error("option '--port' requires a numeric value");
-      }
-      flags.port = parsePort(next);
-    } else if (arg.startsWith("--port=")) {
-      const val = arg.slice("--port=".length);
-      if (!val || isNaN(Number(val))) {
-        throw new Error("option '--port' requires a numeric value");
-      }
-      flags.port = parsePort(val);
-    } else if (arg.startsWith("-")) {
-      throw new Error(`unknown option "${arg}"`);
-    } else {
-      rawPositionals.push(arg);
+    const boolFlag = BOOLEAN_FLAGS[arg];
+    if (boolFlag) {
+      flags[boolFlag] = true;
+      continue;
     }
+
+    const timeout = readNumericOption("timeout", arg, argv, cursor);
+    if (timeout !== undefined) {
+      flags.timeout = timeout;
+      continue;
+    }
+
+    const interval = readNumericOption("interval", arg, argv, cursor);
+    if (interval !== undefined) {
+      flags.interval = interval;
+      continue;
+    }
+
+    const processVal = readOptionValue("process", arg, argv, cursor);
+    if (processVal !== undefined) {
+      flags.process = processVal;
+      continue;
+    }
+
+    const portVal = readNumericOption("port", arg, argv, cursor);
+    if (portVal !== undefined) {
+      flags.port = parsePort(portVal);
+      continue;
+    }
+
+    if (arg.startsWith("-")) {
+      throw new Error(`unknown option "${arg}"`);
+    }
+
+    rawPositionals.push(arg);
   }
 
   if (rawPositionals.length === 0) {

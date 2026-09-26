@@ -145,11 +145,7 @@ export async function runKill(options: RunKillOptions): Promise<void> {
   }
 
   if (printer.json) {
-    if (results.length === 1) {
-      printer.encode(results[0]);
-    } else {
-      printer.encode(results);
-    }
+    printer.encodeSingleOrList(results);
   }
 
   if (failed) {

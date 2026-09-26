@@ -417,6 +417,26 @@ export async function runCli(argv: readonly string[]): Promise<number> {
     return EXIT_SUCCESS;
   }
 
+  function singlePort(name: string, positionals: readonly string[]): string {
+    if (positionals.length !== 1) {
+      throw invalid(`${name} requires one port`);
+    }
+    return positionals[0]!;
+  }
+
+  function toCliError(error: unknown): CliError {
+    if (error instanceof CliError) return error;
+    const message = error instanceof Error ? error.message : String(error);
+    if (
+      message.startsWith("invalid port") ||
+      message.includes("expected 1-65535") ||
+      message.startsWith("port range")
+    ) {
+      return invalid(message);
+    }
+    return new CliError(EXIT_GENERIC, `✗ ${message}`, error);
+  }
+
   try {
     switch (parsed.command) {
       case "kill": {
@@ -430,15 +450,7 @@ export async function runCli(argv: readonly string[]): Promise<number> {
           }
           throw invalid("provide at least one port");
         }
-        let ports: number[];
-        let hasRange: boolean;
-        try {
-          const res = expandPorts(parsed.positionals);
-          ports = res.ports;
-          hasRange = res.hasRange;
-        } catch (err) {
-          throw invalid(err instanceof Error ? err : String(err));
-        }
+        const { ports, hasRange } = expandPorts(parsed.positionals);
         const timeoutSeconds = parsed.flags.timeout ?? 0;
         if (timeoutSeconds < 0) {
           throw invalid("timeout cannot be negative");
@@ -452,40 +464,19 @@ export async function runCli(argv: readonly string[]): Promise<number> {
           provider,
           printer,
         });
-        if (!parsed.flags.json) printThanks();
-        return EXIT_SUCCESS;
+        break;
       }
 
       case "info": {
-        if (parsed.positionals.length !== 1) {
-          throw invalid("info requires one port");
-        }
-        try {
-          await runInfoCommand(parsed.positionals[0]!, provider, printer);
-        } catch (err) {
-          if (!(err instanceof CliError)) {
-            throw invalid(err instanceof Error ? err : String(err));
-          }
-          throw err;
-        }
-        if (!parsed.flags.json) printThanks();
-        return EXIT_SUCCESS;
+        const portArg = singlePort("info", parsed.positionals);
+        await runInfoCommand(portArg, provider, printer);
+        break;
       }
 
       case "check": {
-        if (parsed.positionals.length !== 1) {
-          throw invalid("check requires one port");
-        }
-        try {
-          await runCheckCommand(parsed.positionals[0]!, provider, printer);
-        } catch (err) {
-          if (!(err instanceof CliError)) {
-            throw invalid(err instanceof Error ? err : String(err));
-          }
-          throw err;
-        }
-        if (!parsed.flags.json) printThanks();
-        return EXIT_SUCCESS;
+        const portArg = singlePort("check", parsed.positionals);
+        await runCheckCommand(portArg, provider, printer);
+        break;
       }
 
       case "list": {
@@ -501,8 +492,7 @@ export async function runCli(argv: readonly string[]): Promise<number> {
           provider,
           printer,
         );
-        if (!parsed.flags.json) printThanks();
-        return EXIT_SUCCESS;
+        break;
       }
 
       case "free": {
@@ -526,8 +516,7 @@ export async function runCli(argv: readonly string[]): Promise<number> {
           },
           printer,
         );
-        if (!parsed.flags.json) printThanks();
-        return EXIT_SUCCESS;
+        break;
       }
 
       case "dev": {
@@ -540,72 +529,65 @@ export async function runCli(argv: readonly string[]): Promise<number> {
           provider,
           printer,
         });
-        if (!parsed.flags.json) printThanks();
-        return EXIT_SUCCESS;
+        break;
       }
 
       case "wait": {
-        if (parsed.positionals.length !== 1) {
-          throw invalid("wait requires one port");
-        }
+        const portArg = singlePort("wait", parsed.positionals);
         await runWaitCommand({
-          portArg: parsed.positionals[0]!,
+          portArg,
           timeoutSeconds: parsed.flags.timeout,
           occupied: parsed.flags.occupied,
           provider,
           printer,
         });
-        if (!parsed.flags.json) printThanks();
-        return EXIT_SUCCESS;
+        break;
       }
 
       case "watch": {
-        if (parsed.positionals.length !== 1) {
-          throw invalid("watch requires one port");
-        }
+        const portArg = singlePort("watch", parsed.positionals);
         await runWatchCommand({
-          portArg: parsed.positionals[0]!,
+          portArg,
           intervalMs: parsed.flags.interval,
           provider,
           printer,
         });
-        if (!parsed.flags.json) printThanks();
-        return EXIT_SUCCESS;
+        break;
       }
 
       default:
         printHelp(printer);
-        if (!parsed.flags.json) printThanks();
-        return EXIT_SUCCESS;
+        break;
     }
+
+    if (!parsed.flags.json) printThanks();
+    return EXIT_SUCCESS;
   } catch (error: unknown) {
-    if (error instanceof CliError) {
-      if (error.message) {
-        process.stderr.write(`${error.message}\n`);
-      }
-      if (parsed?.flags?.verbose && error.causeError) {
+    const cliError = toCliError(error);
+    if (cliError.message) {
+      process.stderr.write(`${cliError.message}\n`);
+    }
+    if (parsed?.flags?.verbose) {
+      const verboseSource =
+        cliError.causeError ??
+        (error instanceof Error ? error.stack : undefined);
+      if (verboseSource) {
         let cause: string;
-        if (error.causeError instanceof Error) {
-          cause = error.causeError.stack ?? error.causeError.message;
-        } else if (typeof error.causeError === "string") {
-          cause = error.causeError;
+        if (verboseSource instanceof Error) {
+          cause = verboseSource.stack ?? verboseSource.message;
+        } else if (typeof verboseSource === "string") {
+          cause = verboseSource;
         } else {
           try {
-            cause = JSON.stringify(error.causeError);
+            cause = JSON.stringify(verboseSource);
           } catch {
             cause = "[Unserializable error]";
           }
         }
         process.stderr.write(`Details: ${cause}\n`);
       }
-      return error.code;
     }
-    const message = error instanceof Error ? error.message : String(error);
-    process.stderr.write(`✗ ${message}\n`);
-    if (parsed?.flags?.verbose && error instanceof Error && error.stack) {
-      process.stderr.write(`${error.stack}\n`);
-    }
-    return EXIT_GENERIC;
+    return cliError.code;
   }
 }
 
