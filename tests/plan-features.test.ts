@@ -34,6 +34,14 @@ describe("PLAN.md features implementation", () => {
       expect(parsed.positionals).toEqual(["3000"]);
     });
 
+    it("parses --interactive and -i flags", () => {
+      const p1 = parseCliArgs(["--interactive"]);
+      expect(p1.flags.interactive).toBe(true);
+
+      const p2 = parseCliArgs(["-i"]);
+      expect(p2.flags.interactive).toBe(true);
+    });
+
     it("parses --process flag with space and equal sign", () => {
       const p1 = parseCliArgs(["list", "--process", "node"]);
       expect(p1.command).toBe("list");

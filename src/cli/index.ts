@@ -7,6 +7,7 @@ import {
   outro,
   select,
   spinner,
+  text,
 } from "@clack/prompts";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -89,6 +90,7 @@ Options:
       --process <name>        Filter by process name (for list)
       --port <port>           Filter by port (for list)
       --no-color              Disable colored output
+  -i, --interactive           Launch interactive command menu
       --check-update          Check for package updates
       --no-update-check       Disable automated update check
   -h, --help                  Show help
@@ -230,10 +232,104 @@ function updateNotice(update: UpdateInfo): string {
   return `Update available: ${update.currentVersion} → ${update.latestVersion}. Run: npm install --global killx@latest`;
 }
 
+async function runInteractiveCommandMenu(
+  provider: PlatformProvider,
+  printer: Printer,
+  flags: ParsedArgs["flags"],
+  version: string,
+): Promise<number> {
+  const chosen = await select({
+    message: "Select an action:",
+    options: [
+      {
+        value: "ports",
+        label: "Inspect / kill listening ports",
+        hint: "killx",
+      },
+      { value: "ps", label: "Search processes", hint: "killx ps" },
+      {
+        value: "free",
+        label: "Find an available free port",
+        hint: "killx free",
+      },
+      {
+        value: "dev",
+        label: "Stop common development servers",
+        hint: "killx dev",
+      },
+      { value: "update", label: "Check for updates", hint: "killx update" },
+      { value: "exit", label: "Exit" },
+    ],
+    initialValue: "ports",
+  });
+
+  if (isCancel(chosen) || chosen === "exit") {
+    cancel("Cancelled.");
+    printThanks();
+    return EXIT_SUCCESS;
+  }
+
+  if (chosen === "ports") {
+    return await runInteractiveMenu(provider, printer, flags, version);
+  }
+
+  if (chosen === "ps") {
+    const query = await text({
+      message: "Search processes by name (leave empty for all)",
+      placeholder: "e.g. node, vite, python",
+    });
+    if (isCancel(query)) {
+      cancel("Cancelled.");
+      printThanks();
+      return EXIT_SUCCESS;
+    }
+    await runProcessCommand(
+      {
+        query: query ? String(query).trim() : undefined,
+        kill: flags.kill,
+        force: flags.force,
+        yes: flags.yes,
+      },
+      printer,
+    );
+    printThanks();
+    return EXIT_SUCCESS;
+  }
+
+  if (chosen === "free") {
+    await runFreeCommand(undefined, printer);
+    return EXIT_SUCCESS;
+  }
+
+  if (chosen === "dev") {
+    await runDevCommand({
+      force: flags.force,
+      yes: flags.yes,
+      provider,
+      printer,
+    });
+    printThanks();
+    return EXIT_SUCCESS;
+  }
+
+  if (chosen === "update") {
+    await handleManualUpdateCheck(version, {
+      command: "update",
+      positionals: [],
+      flags: { ...flags, force: true },
+    });
+    return EXIT_SUCCESS;
+  }
+
+  printThanks();
+  return EXIT_SUCCESS;
+}
+
 async function runInteractiveMenu(
   provider: PlatformProvider,
   printer: Printer,
   flags: ParsedArgs["flags"],
+  version: string,
 ): Promise<number> {
   intro("killx");
   const scanSpinner = spinner();
@@ -242,9 +338,8 @@ async function runInteractiveMenu(
   scanSpinner.stop(`Found ${listeners.length} listening process(es)`);
 
   if (listeners.length === 0) {
-    printer.line("No listening ports found.");
-    printThanks();
-    return EXIT_SUCCESS;
+    printer.line("No listening ports found.\n");
+    return await runInteractiveCommandMenu(provider, printer, flags, version);
   }
 
   // Deduplicate and group by port
@@ -407,10 +502,22 @@ export async function runCli(argv: readonly string[]): Promise<number> {
 
   const provider = createPlatformProvider();
 
+  // If interactive flag is passed explicitly: launch command menu
+  if (parsed.flags.interactive) {
+    if (process.stdin.isTTY && process.stdout.isTTY && !parsed.flags.json) {
+      return await runInteractiveCommandMenu(
+        provider,
+        printer,
+        parsed.flags,
+        version,
+      );
+    }
+  }
+
   // If no command and no positionals: launch Clack UI if interactive TTY
   if (!parsed.command) {
     if (process.stdin.isTTY && process.stdout.isTTY && !parsed.flags.json) {
-      return await runInteractiveMenu(provider, printer, parsed.flags);
+      return await runInteractiveMenu(provider, printer, parsed.flags, version);
     }
     printHelp(printer);
     printThanks();
@@ -446,7 +553,12 @@ export async function runCli(argv: readonly string[]): Promise<number> {
             process.stdout.isTTY &&
             !parsed.flags.json
           ) {
-            return await runInteractiveMenu(provider, printer, parsed.flags);
+            return await runInteractiveMenu(
+              provider,
+              printer,
+              parsed.flags,
+              version,
+            );
           }
           throw invalid("provide at least one port");
         }

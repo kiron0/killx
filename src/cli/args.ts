@@ -31,6 +31,7 @@ export interface ParsedArgs {
     process?: string | undefined;
     port?: number | undefined;
     noColor?: boolean | undefined;
+    interactive?: boolean | undefined;
     checkUpdate?: boolean | undefined;
     noUpdateCheck?: boolean | undefined;
   };
@@ -66,7 +67,8 @@ type BooleanFlagKey =
   | "noUpdateCheck"
   | "occupied"
   | "kill"
-  | "noColor";
+  | "noColor"
+  | "interactive";
 
 const BOOLEAN_FLAGS: Record<string, BooleanFlagKey> = {
   "--json": "json",
@@ -87,6 +89,9 @@ const BOOLEAN_FLAGS: Record<string, BooleanFlagKey> = {
   "--occupied": "occupied",
   "--kill": "kill",
   "--no-color": "noColor",
+  "--interactive": "interactive",
+  "-i": "interactive",
+  "-I": "interactive",
 };
 
 function readOptionValue(
