@@ -21,6 +21,7 @@ import {
 import { Printer, printThanks } from "../output";
 import { createPlatformProvider } from "../platform";
 import { expandPorts } from "../port/parser";
+import { searchProcesses } from "../process/search";
 import { parseCliArgs, type ParsedArgs } from "./args";
 import {
   runCheckCommand,
@@ -232,32 +233,72 @@ function updateNotice(update: UpdateInfo): string {
   return `Update available: ${update.currentVersion} → ${update.latestVersion}. Run: npm install --global killx@latest`;
 }
 
+function toCliError(error: unknown): CliError {
+  if (error instanceof CliError) return error;
+  const message = error instanceof Error ? error.message : String(error);
+  if (
+    message.startsWith("invalid port") ||
+    message.includes("expected 1-65535") ||
+    message.startsWith("port range")
+  ) {
+    return invalid(message);
+  }
+  return new CliError(EXIT_GENERIC, `✗ ${message}`, error);
+}
+
 async function runInteractiveCommandMenu(
   provider: PlatformProvider,
   printer: Printer,
   flags: ParsedArgs["flags"],
   version: string,
+  skipIntro = false,
 ): Promise<number> {
+  if (!skipIntro) {
+    intro("killx");
+  }
   const chosen = await select({
     message: "Select an action:",
     options: [
       {
         value: "ports",
         label: "Inspect / kill listening ports",
-        hint: "killx",
+        hint: "interactive list of active ports",
       },
-      { value: "ps", label: "Search processes", hint: "killx ps" },
       {
-        value: "free",
-        label: "Find an available free port",
-        hint: "killx free",
+        value: "kill",
+        label: "Kill port or range directly",
+        hint: "e.g. 3000, 3000-3005",
       },
       {
         value: "dev",
-        label: "Stop common development servers",
-        hint: "killx dev",
+        label: "Stop development servers",
+        hint: "node, vite, next, python, rails...",
       },
-      { value: "update", label: "Check for updates", hint: "killx update" },
+      {
+        value: "ps",
+        label: "Search & terminate processes",
+        hint: "filter by name",
+      },
+      {
+        value: "info",
+        label: "Inspect listener details",
+        hint: "check process, PID, user",
+      },
+      {
+        value: "check",
+        label: "Check port availability",
+        hint: "verify if free or in use",
+      },
+      {
+        value: "free",
+        label: "Find an available free port",
+        hint: "random free port",
+      },
+      {
+        value: "update",
+        label: "Check for updates",
+        hint: "check npm registry",
+      },
       { value: "exit", label: "Exit" },
     ],
     initialValue: "ports",
@@ -269,56 +310,162 @@ async function runInteractiveCommandMenu(
     return EXIT_SUCCESS;
   }
 
-  if (chosen === "ports") {
-    return await runInteractiveMenu(provider, printer, flags, version);
-  }
+  try {
+    if (chosen === "ports") {
+      return await runInteractiveMenu(provider, printer, flags, version, true);
+    }
 
-  if (chosen === "ps") {
-    const query = await text({
-      message: "Search processes by name (leave empty for all)",
-      placeholder: "e.g. node, vite, python",
-    });
-    if (isCancel(query)) {
-      cancel("Cancelled.");
+    if (chosen === "kill") {
+      const portInput = await text({
+        message: "Enter port or range to kill:",
+        placeholder: "e.g. 3000, 3000-3005, 8080",
+        validate(val) {
+          if (!val || !val.trim()) return "Please enter a port or range";
+        },
+      });
+      if (isCancel(portInput)) {
+        cancel("Cancelled.");
+        printThanks();
+        return EXIT_SUCCESS;
+      }
+      const rawPorts = String(portInput).trim().split(/\s+/);
+      const { ports, hasRange } = expandPorts(rawPorts);
+      await runKill({
+        ports,
+        hasRange,
+        force: flags.force,
+        yes: flags.yes,
+        timeoutMs: (flags.timeout ?? 0) * 1000,
+        provider,
+        printer,
+      });
       printThanks();
       return EXIT_SUCCESS;
     }
-    await runProcessCommand(
-      {
-        query: query ? String(query).trim() : undefined,
-        kill: flags.kill,
-        force: flags.force,
-        yes: flags.yes,
-      },
-      printer,
-    );
+
+    if (chosen === "dev") {
+      try {
+        await runDevCommand({
+          force: flags.force,
+          yes: flags.yes,
+          provider,
+          printer,
+        });
+      } catch (err) {
+        if (err instanceof CliError) {
+          outro(err.message.replace(/^[•✗]\s*/, ""));
+          printThanks();
+          return EXIT_SUCCESS;
+        }
+        throw err;
+      }
+      printThanks();
+      return EXIT_SUCCESS;
+    }
+
+    if (chosen === "ps") {
+      const query = await text({
+        message: "Search processes by name (leave empty for all):",
+        placeholder: "e.g. node, vite, python",
+      });
+      if (isCancel(query)) {
+        cancel("Cancelled.");
+        printThanks();
+        return EXIT_SUCCESS;
+      }
+      const q = query ? String(query).trim() : undefined;
+      const matches = await searchProcesses(q ?? "");
+      if (matches.length === 0) {
+        outro(
+          q ? `No processes matching "${q}" found.` : "No processes found.",
+        );
+        printThanks();
+        return EXIT_SUCCESS;
+      }
+      const headers = ["PID", "USER", "CPU", "MEM", "COMMAND"];
+      const rows = matches.map((m) => [
+        String(m.pid),
+        m.user,
+        m.cpu.toFixed(1),
+        m.memory.toFixed(1),
+        m.command,
+      ]);
+      printer.table(headers, rows);
+
+      const shouldKill = await confirm({
+        message: `Kill ${matches.length} matching process(es)?`,
+        initialValue: false,
+      });
+      if (!isCancel(shouldKill) && shouldKill) {
+        await runProcessCommand(
+          {
+            query: q,
+            kill: true,
+            force: flags.force,
+            yes: true,
+          },
+          printer,
+        );
+      }
+      printThanks();
+      return EXIT_SUCCESS;
+    }
+
+    if (chosen === "info") {
+      const portInput = await text({
+        message: "Enter port to inspect:",
+        placeholder: "e.g. 3000",
+        validate(val) {
+          if (!val || !val.trim()) return "Please enter a port";
+        },
+      });
+      if (isCancel(portInput)) {
+        cancel("Cancelled.");
+        printThanks();
+        return EXIT_SUCCESS;
+      }
+      await runInfoCommand(String(portInput).trim(), provider, printer);
+      printThanks();
+      return EXIT_SUCCESS;
+    }
+
+    if (chosen === "check") {
+      const portInput = await text({
+        message: "Enter port to check:",
+        placeholder: "e.g. 3000",
+        validate(val) {
+          if (!val || !val.trim()) return "Please enter a port";
+        },
+      });
+      if (isCancel(portInput)) {
+        cancel("Cancelled.");
+        printThanks();
+        return EXIT_SUCCESS;
+      }
+      await runCheckCommand(String(portInput).trim(), provider, printer);
+      printThanks();
+      return EXIT_SUCCESS;
+    }
+
+    if (chosen === "free") {
+      await runFreeCommand(undefined, printer);
+      printThanks();
+      return EXIT_SUCCESS;
+    }
+
+    if (chosen === "update") {
+      await handleManualUpdateCheck(version, {
+        command: "update",
+        positionals: [],
+        flags: { ...flags, force: true },
+      });
+      return EXIT_SUCCESS;
+    }
+  } catch (error) {
+    const cliError = toCliError(error);
+    outro(cliError.message.replace(/^[•✗]\s*/, ""));
     printThanks();
-    return EXIT_SUCCESS;
-  }
-
-  if (chosen === "free") {
-    await runFreeCommand(undefined, printer);
-    return EXIT_SUCCESS;
-  }
-
-  if (chosen === "dev") {
-    await runDevCommand({
-      force: flags.force,
-      yes: flags.yes,
-      provider,
-      printer,
-    });
-    printThanks();
-    return EXIT_SUCCESS;
-  }
-
-  if (chosen === "update") {
-    await handleManualUpdateCheck(version, {
-      command: "update",
-      positionals: [],
-      flags: { ...flags, force: true },
-    });
-    return EXIT_SUCCESS;
+    return cliError.code;
   }
 
   printThanks();
@@ -330,122 +477,140 @@ async function runInteractiveMenu(
   printer: Printer,
   flags: ParsedArgs["flags"],
   version: string,
+  skipIntro = false,
 ): Promise<number> {
-  intro("killx");
-  const scanSpinner = spinner();
-  scanSpinner.start("Scanning listening ports");
-  const listeners = await provider.list();
-  scanSpinner.stop(`Found ${listeners.length} listening process(es)`);
-
-  if (listeners.length === 0) {
-    printer.line("No listening ports found.\n");
-    return await runInteractiveCommandMenu(provider, printer, flags, version);
+  if (!skipIntro) {
+    intro("killx");
   }
+  try {
+    const scanSpinner = spinner();
+    scanSpinner.start("Scanning listening ports");
+    const listeners = await provider.list();
+    scanSpinner.stop(`Found ${listeners.length} listening process(es)`);
 
-  // Deduplicate and group by port
-  const portMap = new Map<number, ProcessInfo[]>();
-  for (const proc of listeners) {
-    const list = portMap.get(proc.port) ?? [];
-    list.push(proc);
-    portMap.set(proc.port, list);
-  }
+    if (listeners.length === 0) {
+      printer.line("No listening ports found.\n");
+      return await runInteractiveCommandMenu(
+        provider,
+        printer,
+        flags,
+        version,
+        true,
+      );
+    }
 
-  const sortedPorts = Array.from(portMap.keys()).sort((a, b) => a - b);
+    // Deduplicate and group by port
+    const portMap = new Map<number, ProcessInfo[]>();
+    for (const proc of listeners) {
+      const list = portMap.get(proc.port) ?? [];
+      list.push(proc);
+      portMap.set(proc.port, list);
+    }
 
-  const selectedPorts = await multiselect({
-    message: "Select ports (Space to toggle, Enter to proceed)",
-    options: sortedPorts.map((port) => {
-      const procs = portMap.get(port)!;
-      const desc = procs
-        .map((p) => `${p.process} (PID ${p.pid}${p.user ? `, ${p.user}` : ""})`)
-        .join(" | ");
-      return {
-        value: port,
-        label: `:${port}`,
-        hint: desc,
-      };
-    }),
-    required: false,
-  });
+    const sortedPorts = Array.from(portMap.keys()).sort((a, b) => a - b);
 
-  if (isCancel(selectedPorts)) {
-    cancel("Cancelled.");
-    printThanks();
-    return EXIT_SUCCESS;
-  }
+    const selectedPorts = await multiselect({
+      message: "Select ports (Space to toggle, Enter to proceed)",
+      options: sortedPorts.map((port) => {
+        const procs = portMap.get(port)!;
+        const desc = procs
+          .map(
+            (p) => `${p.process} (PID ${p.pid}${p.user ? `, ${p.user}` : ""})`,
+          )
+          .join(" | ");
+        return {
+          value: port,
+          label: `:${port}`,
+          hint: desc,
+        };
+      }),
+      required: false,
+    });
 
-  if (selectedPorts.length === 0) {
-    printer.line("No ports selected.");
-    printThanks();
-    return EXIT_SUCCESS;
-  }
-
-  const action = await select({
-    message: `Action for selected port(s): ${selectedPorts.join(", ")}`,
-    options: [
-      { value: "kill", label: "Kill processes", hint: "SIGTERM / graceful" },
-      {
-        value: "force",
-        label: "Force kill processes",
-        hint: "SIGKILL immediately",
-      },
-      { value: "info", label: "Inspect listener details" },
-      { value: "check", label: "Check availability" },
-    ],
-    initialValue: "kill",
-  });
-
-  if (isCancel(action)) {
-    cancel("Cancelled.");
-    printThanks();
-    return EXIT_SUCCESS;
-  }
-
-  if (action === "kill" || action === "force") {
-    const isForce = action === "force" || Boolean(flags.force);
-    const confirmed = flags.yes
-      ? true
-      : await confirm({
-          message: `${isForce ? "Force kill" : "Kill"} selected ${selectedPorts.length} port(s)?`,
-          initialValue: true,
-        });
-
-    if (isCancel(confirmed) || !confirmed) {
+    if (isCancel(selectedPorts)) {
       cancel("Cancelled.");
       printThanks();
       return EXIT_SUCCESS;
     }
 
-    await runKill({
-      ports: selectedPorts,
-      force: isForce,
-      yes: true,
-      timeoutMs: (flags.timeout ?? 0) * 1000,
-      provider,
-      printer,
+    if (selectedPorts.length === 0) {
+      printer.line("No ports selected.");
+      printThanks();
+      return EXIT_SUCCESS;
+    }
+
+    const action = await select({
+      message: `Action for selected port(s): ${selectedPorts.join(", ")}`,
+      options: [
+        { value: "kill", label: "Kill processes", hint: "SIGTERM / graceful" },
+        {
+          value: "force",
+          label: "Force kill processes",
+          hint: "SIGKILL immediately",
+        },
+        { value: "info", label: "Inspect listener details" },
+        { value: "check", label: "Check availability" },
+      ],
+      initialValue: "kill",
     });
-    printThanks();
-    return EXIT_SUCCESS;
-  }
 
-  if (action === "info") {
-    for (const port of selectedPorts) {
-      await runInfoCommand(String(port), provider, printer);
+    if (isCancel(action)) {
+      cancel("Cancelled.");
+      printThanks();
+      return EXIT_SUCCESS;
     }
-    printThanks();
-    return EXIT_SUCCESS;
-  }
 
-  if (action === "check") {
-    for (const port of selectedPorts) {
-      await runCheckCommand(String(port), provider, printer);
+    if (action === "kill" || action === "force") {
+      const isForce = action === "force" || Boolean(flags.force);
+      const confirmed = flags.yes
+        ? true
+        : await confirm({
+            message: `${isForce ? "Force kill" : "Kill"} selected ${selectedPorts.length} port(s)?`,
+            initialValue: true,
+          });
+
+      if (isCancel(confirmed) || !confirmed) {
+        cancel("Cancelled.");
+        printThanks();
+        return EXIT_SUCCESS;
+      }
+
+      await runKill({
+        ports: selectedPorts,
+        force: isForce,
+        yes: true,
+        timeoutMs: (flags.timeout ?? 0) * 1000,
+        provider,
+        printer,
+      });
+      printThanks();
+      return EXIT_SUCCESS;
     }
+
+    if (action === "info") {
+      for (const port of selectedPorts) {
+        await runInfoCommand(String(port), provider, printer);
+      }
+      printThanks();
+      return EXIT_SUCCESS;
+    }
+
+    if (action === "check") {
+      for (const port of selectedPorts) {
+        await runCheckCommand(String(port), provider, printer);
+      }
+      printThanks();
+      return EXIT_SUCCESS;
+    }
+
     printThanks();
     return EXIT_SUCCESS;
+  } catch (error) {
+    const cliError = toCliError(error);
+    outro(cliError.message.replace(/^[•✗]\s*/, ""));
+    printThanks();
+    return cliError.code;
   }
-
-  printThanks();
-  return EXIT_SUCCESS;
 }
 
 export async function runCli(argv: readonly string[]): Promise<number> {
@@ -529,19 +694,6 @@ export async function runCli(argv: readonly string[]): Promise<number> {
       throw invalid(`${name} requires one port`);
     }
     return positionals[0]!;
-  }
-
-  function toCliError(error: unknown): CliError {
-    if (error instanceof CliError) return error;
-    const message = error instanceof Error ? error.message : String(error);
-    if (
-      message.startsWith("invalid port") ||
-      message.includes("expected 1-65535") ||
-      message.startsWith("port range")
-    ) {
-      return invalid(message);
-    }
-    return new CliError(EXIT_GENERIC, `✗ ${message}`, error);
   }
 
   try {
@@ -710,9 +862,16 @@ async function main(): Promise<void> {
       process.exit(130);
     });
   }
-  const code = await runCli(process.argv.slice(2));
-  if (code !== EXIT_SUCCESS) {
-    process.exit(code);
+  try {
+    const code = await runCli(process.argv.slice(2));
+    if (code !== EXIT_SUCCESS) {
+      process.exit(code);
+    }
+  } catch (error) {
+    const cliError = toCliError(error);
+    process.stderr.write(`${cliError.message}\n`);
+    printThanks();
+    process.exit(cliError.code);
   }
 }
 

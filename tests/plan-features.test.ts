@@ -8,6 +8,7 @@ import {
   CliError,
   EXIT_INVALID_ARGUMENTS,
   EXIT_PERMISSION,
+  EXIT_SUCCESS,
   EXIT_TERMINATION,
 } from "../src/errors";
 import * as procKill from "../src/process/kill";
@@ -278,6 +279,12 @@ describe("PLAN.md features implementation", () => {
       } finally {
         writeSpy.mockRestore();
       }
+    });
+
+    it("returns exit success when -i is run non-interactively", async () => {
+      // Non-interactive stdin/stdout should print help and return EXIT_SUCCESS
+      const code = await runCli(["-i", "--json"]);
+      expect(code).toBe(EXIT_SUCCESS);
     });
   });
 });
