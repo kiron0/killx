@@ -103,6 +103,10 @@ export class Printer {
 export const THANKS_MESSAGE =
   "\nThanks for using killx..!\nFor more visit - killx.js.org";
 
-export function printThanks(): void {
+export function printThanks(options?: {
+  json?: boolean | undefined;
+  quiet?: boolean | undefined;
+}): void {
+  if (options?.json || options?.quiet) return;
   console.log(THANKS_MESSAGE);
 }

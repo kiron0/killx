@@ -55,7 +55,7 @@ export async function terminateProcess(
   options: TerminateOptions = {},
   runner: CommandRunner = defaultCommandRunner,
 ): Promise<SignalName> {
-  if (pid <= 1) {
+  if (pid <= 1 || pid === process.pid) {
     throw new Error(`refusing to terminate protected PID ${pid}`);
   }
 

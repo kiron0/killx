@@ -125,15 +125,20 @@ export async function runKill(options: RunKillOptions): Promise<void> {
       }
     } catch (error: unknown) {
       failed = true;
+      const message = error instanceof Error ? error.message : String(error);
       const isPerm =
-        error &&
-        typeof error === "object" &&
-        "code" in error &&
-        (error as { code: string }).code === "EPERM";
+        Boolean(
+          error &&
+          typeof error === "object" &&
+          "code" in error &&
+          (error as { code: string }).code === "EPERM",
+        ) ||
+        message.includes("EPERM") ||
+        message.includes("Operation not permitted") ||
+        message.includes("Access is denied");
       if (isPerm) {
         permission = true;
       }
-      const message = error instanceof Error ? error.message : String(error);
       results.push({
         success: false,
         port: target.port,

@@ -144,8 +144,13 @@ async function handleUpdateCheck(
   }
 
   console.log(`Updating to ${update.latestVersion}...`);
-  await installUpdate(update.latestVersion);
-  outro(`Updated to ${update.latestVersion}. Restart killx to use it.`);
+  try {
+    await installUpdate(update.latestVersion);
+    outro(`Updated to ${update.latestVersion}. Restart killx to use it.`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    outro(`Update failed: ${message}`);
+  }
 }
 
 async function handleManualUpdateCheck(
@@ -202,8 +207,14 @@ async function handleManualUpdateCheck(
       }
       if (answer === "install") {
         console.log(`Updating to ${result.latestVersion}...`);
-        await installUpdate(result.latestVersion);
-        outro(`Updated to ${result.latestVersion}. Restart killx to use it.`);
+        try {
+          await installUpdate(result.latestVersion);
+          outro(`Updated to ${result.latestVersion}. Restart killx to use it.`);
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          outro(`Update failed: ${message}`);
+        }
       }
     }
     printThanks();

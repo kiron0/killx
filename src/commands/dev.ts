@@ -5,8 +5,11 @@ import type { Printer } from "../output";
 
 const DEV_PROCESS_NAMES = new Set([
   "node",
+  "bun",
+  "deno",
   "vite",
   "next",
+  "next-server",
   "python",
   "python3",
   "django",

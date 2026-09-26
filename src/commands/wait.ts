@@ -1,4 +1,4 @@
-import { CliError, EXIT_GENERIC } from "../errors";
+import { CliError, EXIT_GENERIC, invalid } from "../errors";
 import { parsePort } from "../port/parser";
 import type { PlatformProvider } from "../types";
 import type { Printer } from "../output";
@@ -24,7 +24,7 @@ export async function runWaitCommand(
   const target = parsePort(portArg);
 
   if (timeoutSeconds < 0) {
-    throw new Error("timeout cannot be negative");
+    throw invalid("timeout cannot be negative");
   }
 
   const deadline = timeoutSeconds > 0 ? Date.now() + timeoutSeconds * 1000 : 0;

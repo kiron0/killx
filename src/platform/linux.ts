@@ -41,7 +41,11 @@ export class LinuxProvider extends BasePlatformProvider {
       if (!line) continue;
       const fields = line.split(/\s+/);
       if (fields.length < 4) continue;
-      const local = fields[3] ?? "";
+      const candidateLocal = fields[3] ?? "";
+      const local =
+        portFromAddress(candidateLocal) > 0
+          ? candidateLocal
+          : (fields[4] ?? "");
       const port = portFromAddress(local);
       const match = SS_PROCESS_REGEX.exec(line);
       if (!port || !match || !match[1] || !match[2]) continue;

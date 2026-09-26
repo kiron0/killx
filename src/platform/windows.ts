@@ -47,9 +47,19 @@ export class WindowsProvider extends BasePlatformProvider {
       preliminary.push({ pid, port });
     }
 
+    const metaCache = new Map<
+      number,
+      Promise<{ name: string; command: string }>
+    >();
+    for (const item of preliminary) {
+      if (!metaCache.has(item.pid)) {
+        metaCache.set(item.pid, this.metadata(item.pid));
+      }
+    }
+
     const result: ProcessInfo[] = [];
     for (const item of preliminary) {
-      const { name, command } = await this.metadata(item.pid);
+      const { name, command } = await metaCache.get(item.pid)!;
       result.push({
         pid: item.pid,
         port: item.port,

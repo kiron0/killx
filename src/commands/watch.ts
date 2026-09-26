@@ -1,3 +1,4 @@
+import { invalid } from "../errors";
 import { parsePort } from "../port/parser";
 import type { PlatformProvider } from "../types";
 import type { Printer } from "../output";
@@ -17,7 +18,7 @@ export async function runWatchCommand(
   const target = parsePort(portArg);
 
   if (intervalMs < 100) {
-    throw new Error("interval must be at least 100ms");
+    throw invalid("interval must be at least 100ms");
   }
 
   printer.line(`Watching :${target}`);
@@ -36,6 +37,17 @@ export async function runWatchCommand(
       last = state;
     }
 
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    if (signal?.aborted) break;
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, intervalMs);
+      signal?.addEventListener(
+        "abort",
+        () => {
+          clearTimeout(timer);
+          resolve();
+        },
+        { once: true },
+      );
+    });
   }
 }
