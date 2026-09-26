@@ -86,6 +86,9 @@ Options:
       --occupied              Wait until port becomes occupied (for wait)
       --interval <ms>         Poll interval in ms (for watch)
       --kill                  Terminate matching processes (for ps)
+      --process <name>        Filter by process name (for list)
+      --port <port>           Filter by port (for list)
+      --no-color              Disable colored output
       --check-update          Check for package updates
       --no-update-check       Disable automated update check
   -h, --help                  Show help
@@ -363,6 +366,7 @@ export async function runCli(argv: readonly string[]): Promise<number> {
   const printer = new Printer({
     json: parsed.flags.json,
     quiet: parsed.flags.quiet,
+    noColor: parsed.flags.noColor,
   });
 
   if (parsed.flags.help) {
@@ -426,7 +430,15 @@ export async function runCli(argv: readonly string[]): Promise<number> {
           }
           throw invalid("provide at least one port");
         }
-        const { ports, hasRange } = expandPorts(parsed.positionals);
+        let ports: number[];
+        let hasRange: boolean;
+        try {
+          const res = expandPorts(parsed.positionals);
+          ports = res.ports;
+          hasRange = res.hasRange;
+        } catch (err) {
+          throw invalid(err instanceof Error ? err : String(err));
+        }
         const timeoutSeconds = parsed.flags.timeout ?? 0;
         if (timeoutSeconds < 0) {
           throw invalid("timeout cannot be negative");
@@ -448,7 +460,14 @@ export async function runCli(argv: readonly string[]): Promise<number> {
         if (parsed.positionals.length !== 1) {
           throw invalid("info requires one port");
         }
-        await runInfoCommand(parsed.positionals[0]!, provider, printer);
+        try {
+          await runInfoCommand(parsed.positionals[0]!, provider, printer);
+        } catch (err) {
+          if (!(err instanceof CliError)) {
+            throw invalid(err instanceof Error ? err : String(err));
+          }
+          throw err;
+        }
         if (!parsed.flags.json) printThanks();
         return EXIT_SUCCESS;
       }
@@ -457,7 +476,14 @@ export async function runCli(argv: readonly string[]): Promise<number> {
         if (parsed.positionals.length !== 1) {
           throw invalid("check requires one port");
         }
-        await runCheckCommand(parsed.positionals[0]!, provider, printer);
+        try {
+          await runCheckCommand(parsed.positionals[0]!, provider, printer);
+        } catch (err) {
+          if (!(err instanceof CliError)) {
+            throw invalid(err instanceof Error ? err : String(err));
+          }
+          throw err;
+        }
         if (!parsed.flags.json) printThanks();
         return EXIT_SUCCESS;
       }
@@ -466,7 +492,15 @@ export async function runCli(argv: readonly string[]): Promise<number> {
         if (parsed.positionals.length > 1) {
           throw invalid("list accepts at most one port or range");
         }
-        await runListCommand(parsed.positionals[0], provider, printer);
+        await runListCommand(
+          {
+            rangeArg: parsed.positionals[0],
+            process: parsed.flags.process,
+            port: parsed.flags.port,
+          },
+          provider,
+          printer,
+        );
         if (!parsed.flags.json) printThanks();
         return EXIT_SUCCESS;
       }
@@ -549,10 +583,22 @@ export async function runCli(argv: readonly string[]): Promise<number> {
       if (error.message) {
         process.stderr.write(`${error.message}\n`);
       }
+      if (parsed?.flags?.verbose && error.causeError) {
+        const cause =
+          error.causeError instanceof Error
+            ? (error.causeError.stack ?? error.causeError.message)
+            : typeof error.causeError === "object"
+              ? JSON.stringify(error.causeError)
+              : String(error.causeError);
+        process.stderr.write(`Details: ${cause}\n`);
+      }
       return error.code;
     }
     const message = error instanceof Error ? error.message : String(error);
     process.stderr.write(`✗ ${message}\n`);
+    if (parsed?.flags?.verbose && error instanceof Error && error.stack) {
+      process.stderr.write(`${error.stack}\n`);
+    }
     return EXIT_GENERIC;
   }
 }

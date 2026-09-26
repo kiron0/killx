@@ -153,16 +153,20 @@ export async function runKill(options: RunKillOptions): Promise<void> {
   }
 
   if (failed) {
+    const firstFailed = results.find((r) => !r.success);
+    const lastError = firstFailed?.error;
     if (permission) {
-      throw new CliError(
-        EXIT_PERMISSION,
-        "✗ Permission denied while terminating process\n\nTry:\n  sudo killx <port>",
-      );
+      const msg =
+        results.length === 1 && firstFailed
+          ? `✗ Permission denied while terminating ${firstFailed.process} (PID ${firstFailed.pid})\n\nTry:\n  sudo killx ${firstFailed.port}`
+          : "✗ Permission denied while terminating process\n\nTry:\n  sudo killx <port>";
+      throw new CliError(EXIT_PERMISSION, msg, lastError);
     }
-    throw new CliError(
-      EXIT_TERMINATION,
-      "✗ Process could not be terminated; retry with --force",
-    );
+    const msg =
+      results.length === 1 && firstFailed
+        ? `✗ ${firstFailed.process} (PID ${firstFailed.pid}) did not exit\n\nTry:\n  killx ${firstFailed.port} --force`
+        : "✗ Process could not be terminated; retry with --force";
+    throw new CliError(EXIT_TERMINATION, msg, lastError);
   }
 
   if (results.length > 1 && !printer.json) {

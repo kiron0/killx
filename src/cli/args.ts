@@ -1,3 +1,5 @@
+import { parsePort } from "../port/parser";
+
 export type CliCommand =
   | "kill"
   | "info"
@@ -26,6 +28,9 @@ export interface ParsedArgs {
     kill?: boolean | undefined;
     help?: boolean | undefined;
     version?: boolean | undefined;
+    process?: string | undefined;
+    port?: number | undefined;
+    noColor?: boolean | undefined;
     checkUpdate?: boolean | undefined;
     noUpdateCheck?: boolean | undefined;
   };
@@ -102,6 +107,32 @@ export function parseCliArgs(argv: readonly string[]): ParsedArgs {
         throw new Error("option '--interval' requires a numeric value");
       }
       flags.interval = Number(val);
+    } else if (arg === "--no-color") {
+      flags.noColor = true;
+    } else if (arg === "--process") {
+      const next = argv[++i];
+      if (!next) {
+        throw new Error("option '--process' requires a value");
+      }
+      flags.process = next;
+    } else if (arg.startsWith("--process=")) {
+      const val = arg.slice("--process=".length);
+      if (!val) {
+        throw new Error("option '--process' requires a value");
+      }
+      flags.process = val;
+    } else if (arg === "--port") {
+      const next = argv[++i];
+      if (!next || isNaN(Number(next))) {
+        throw new Error("option '--port' requires a numeric value");
+      }
+      flags.port = parsePort(next);
+    } else if (arg.startsWith("--port=")) {
+      const val = arg.slice("--port=".length);
+      if (!val || isNaN(Number(val))) {
+        throw new Error("option '--port' requires a numeric value");
+      }
+      flags.port = parsePort(val);
     } else if (arg.startsWith("-")) {
       throw new Error(`unknown option "${arg}"`);
     } else {

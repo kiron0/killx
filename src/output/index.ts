@@ -3,6 +3,7 @@ import type { ProcessInfo } from "../types";
 export interface PrinterOptions {
   json?: boolean | undefined;
   quiet?: boolean | undefined;
+  noColor?: boolean | undefined;
   writer?: ((text: string) => void) | undefined;
   errorWriter?: ((text: string) => void) | undefined;
 }
@@ -17,7 +18,10 @@ export class Printer {
   constructor(options: PrinterOptions = {}) {
     this.json = Boolean(options.json);
     this.quiet = Boolean(options.quiet);
-    this.color = !process.env.NO_COLOR && Boolean(process.stdout.isTTY);
+    this.color =
+      !options.noColor &&
+      !process.env.NO_COLOR &&
+      Boolean(process.stdout.isTTY);
     this.writeOutput = options.writer ?? ((text) => process.stdout.write(text));
     this.writeError =
       options.errorWriter ?? ((text) => process.stderr.write(text));
