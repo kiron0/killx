@@ -57,7 +57,7 @@ export async function getPackageVersion(): Promise<string> {
       // try next
     }
   }
-  return "0.1.0";
+  return "0.1.1";
 }
 
 export function printHelp(printer: Printer): void {
@@ -890,7 +890,11 @@ async function main(): Promise<void> {
 const scriptPath = process.argv[1] ?? "";
 const isDirectCli =
   Boolean(scriptPath) &&
-  (scriptPath.endsWith("cli.js") || scriptPath.endsWith("cli.ts"));
+  (scriptPath.endsWith("cli.js") ||
+    scriptPath.endsWith("cli.ts") ||
+    scriptPath.endsWith("killx") ||
+    scriptPath.includes("/killx") ||
+    scriptPath.includes("\\killx"));
 
 if (isDirectCli) {
   void main();

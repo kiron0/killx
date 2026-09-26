@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.1
+
+- Fix global and npx binary execution when invoked as `killx` (binary alias without `.js` extension).
+- Ensure CLI auto-executes across global installs, npx runner, and package managers.
+
 ## 0.1.0
 
 - Safe port-based process termination with graceful SIGTERM escalation to SIGKILL via `--timeout <seconds>`.

@@ -1,6 +1,6 @@
 {
   "name": "killx",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Find and kill the process using a port.",
   "type": "module",
   "bin": {
