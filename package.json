@@ -26,7 +26,6 @@
   "engines": {
     "node": ">=20"
   },
-  "packageManager": "npm@12.1.0",
   "scripts": {
     "build": "tsup",
     "build:watch": "tsup --watch",
