@@ -26,7 +26,7 @@ describe("searchProcesses on Darwin/Linux (ps)", () => {
       memory: 0.8,
       command: "/usr/local/bin/node /app/server.js",
     });
-    expect(results[1]!.process ?? results[1]!.command).toContain("python3");
+    expect(results[1]!.command).toContain("python3");
   });
 
   it("filters processes by case-insensitive query", async () => {

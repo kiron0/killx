@@ -584,12 +584,18 @@ export async function runCli(argv: readonly string[]): Promise<number> {
         process.stderr.write(`${error.message}\n`);
       }
       if (parsed?.flags?.verbose && error.causeError) {
-        const cause =
-          error.causeError instanceof Error
-            ? (error.causeError.stack ?? error.causeError.message)
-            : typeof error.causeError === "object"
-              ? JSON.stringify(error.causeError)
-              : String(error.causeError);
+        let cause: string;
+        if (error.causeError instanceof Error) {
+          cause = error.causeError.stack ?? error.causeError.message;
+        } else if (typeof error.causeError === "string") {
+          cause = error.causeError;
+        } else {
+          try {
+            cause = JSON.stringify(error.causeError);
+          } catch {
+            cause = "[Unserializable error]";
+          }
+        }
         process.stderr.write(`Details: ${cause}\n`);
       }
       return error.code;

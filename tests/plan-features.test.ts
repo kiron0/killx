@@ -5,6 +5,7 @@ import { runKill } from "../src/commands/kill";
 import { runCli } from "../src/cli";
 import { Printer } from "../src/output";
 import {
+  CliError,
   EXIT_INVALID_ARGUMENTS,
   EXIT_PERMISSION,
   EXIT_TERMINATION,
@@ -196,19 +197,20 @@ describe("PLAN.md features implementation", () => {
           printer,
         });
         expect.unreachable("should have thrown");
-      } catch (err: any) {
-        expect(err.code).toBe(EXIT_TERMINATION);
-        expect(err.message).toContain("✗ node (PID 18342) did not exit");
-        expect(err.message).toContain("killx 3000 --force");
-        expect(err.causeError).toBe("process is still running");
+      } catch (err: unknown) {
+        expect(err).toBeInstanceOf(CliError);
+        const cliErr = err as CliError;
+        expect(cliErr.code).toBe(EXIT_TERMINATION);
+        expect(cliErr.message).toContain("✗ node (PID 18342) did not exit");
+        expect(cliErr.message).toContain("killx 3000 --force");
+        expect(cliErr.causeError).toBe("process is still running");
       } finally {
         terminateSpy.mockRestore();
       }
     });
 
     it("reports specific process info on single process permission denied", async () => {
-      const permErr = new Error("kill EPERM");
-      (permErr as any).code = "EPERM";
+      const permErr = Object.assign(new Error("kill EPERM"), { code: "EPERM" });
 
       const terminateSpy = vi
         .spyOn(procKill, "terminateProcess")
@@ -235,13 +237,15 @@ describe("PLAN.md features implementation", () => {
           printer,
         });
         expect.unreachable("should have thrown");
-      } catch (err: any) {
-        expect(err.code).toBe(EXIT_PERMISSION);
-        expect(err.message).toContain(
+      } catch (err: unknown) {
+        expect(err).toBeInstanceOf(CliError);
+        const cliErr = err as CliError;
+        expect(cliErr.code).toBe(EXIT_PERMISSION);
+        expect(cliErr.message).toContain(
           "✗ Permission denied while terminating nginx (PID 812)",
         );
-        expect(err.message).toContain("sudo killx 80");
-        expect(err.causeError).toBe("kill EPERM");
+        expect(cliErr.message).toContain("sudo killx 80");
+        expect(cliErr.causeError).toBe("kill EPERM");
       } finally {
         terminateSpy.mockRestore();
       }
@@ -251,11 +255,12 @@ describe("PLAN.md features implementation", () => {
   describe("runCli verbose error output", () => {
     it("outputs error cause in verbose mode", async () => {
       let stderr = "";
-      const origStderr = process.stderr.write;
-      process.stderr.write = ((chunk: any) => {
-        stderr += String(chunk);
-        return true;
-      }) as any;
+      const writeSpy = vi
+        .spyOn(process.stderr, "write")
+        .mockImplementation((chunk: string | Uint8Array) => {
+          stderr += String(chunk);
+          return true;
+        });
 
       try {
         // Run with an invalid port to trigger error in verbose mode
@@ -263,7 +268,7 @@ describe("PLAN.md features implementation", () => {
         expect(code).toBe(EXIT_INVALID_ARGUMENTS);
         expect(stderr).toContain("✗");
       } finally {
-        process.stderr.write = origStderr;
+        writeSpy.mockRestore();
       }
     });
   });
