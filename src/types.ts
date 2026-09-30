@@ -54,4 +54,26 @@ export interface CliOptions {
   interval?: number | undefined;
   kill?: boolean | undefined;
   startPort?: number | undefined;
+  tree?: boolean | undefined;
+  cwd?: string | undefined;
+}
+
+export interface ProcessTreeNode {
+  pid: number;
+  ppid: number;
+  name: string;
+  command: string;
+  user?: string | undefined;
+  cwd?: string | undefined;
+  startTime?: string | undefined;
+  isListener?: boolean | undefined;
+  children?: ProcessTreeNode[] | undefined;
+}
+
+export interface DockerContainerInfo {
+  containerId: string;
+  name: string;
+  image: string;
+  ports: string;
+  publishedPort: number;
 }

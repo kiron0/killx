@@ -1,0 +1,421 @@
+import { homedir } from "node:os";
+import { defaultCommandRunner, type CommandRunner } from "../platform/command";
+import {
+  isProcessAlive,
+  sendSignal,
+  sendSignalWindows,
+  waitUntilGone,
+} from "./kill";
+import type { ProcessTreeNode, SignalName, TerminateOptions } from "../types";
+
+export interface ProcessRawInfo {
+  pid: number;
+  ppid: number;
+  name: string;
+  command: string;
+  user?: string | undefined;
+}
+
+const SHELL_OR_ROOT_NAMES = new Set([
+  "sh",
+  "bash",
+  "zsh",
+  "fish",
+  "csh",
+  "tcsh",
+  "dash",
+  "ksh",
+  "ion",
+  "nu",
+  "xonsh",
+  "launchd",
+  "systemd",
+  "init",
+  "login",
+  "sshd",
+  "tmux",
+  "screen",
+  "iterm2",
+  "alacritty",
+  "kitty",
+  "terminal",
+  "gnome-terminal",
+  "code",
+  "cmd",
+  "cmd.exe",
+  "powershell",
+  "powershell.exe",
+  "pwsh",
+  "pwsh.exe",
+  "explorer",
+  "explorer.exe",
+]);
+
+export function isShellOrRoot(name: string): boolean {
+  const base = name
+    .toLowerCase()
+    .replace(/^.*\//, "")
+    .replace(/\.exe$/, "");
+  return SHELL_OR_ROOT_NAMES.has(base);
+}
+
+export async function getCwdForPid(
+  pid: number,
+  runner: CommandRunner = defaultCommandRunner,
+): Promise<string> {
+  if (pid <= 1) return "";
+  if (process.platform === "win32") {
+    return "";
+  }
+  // Darwin / Linux: try lsof -a -p <pid> -d cwd -Fn
+  try {
+    const stdout = await runner("lsof", [
+      "-a",
+      "-p",
+      String(pid),
+      "-d",
+      "cwd",
+      "-Fn",
+    ]);
+    for (const line of stdout.split("\n")) {
+      if (line.startsWith("n/")) {
+        return line.slice(1).trim();
+      }
+    }
+  } catch {
+    // try next
+  }
+
+  // Linux: readlink /proc/<pid>/cwd
+  if (process.platform === "linux") {
+    try {
+      const stdout = await runner("readlink", [`/proc/${pid}/cwd`]);
+      const res = stdout.trim();
+      if (res) return res;
+    } catch {
+      // ignore
+    }
+  }
+
+  return "";
+}
+
+export async function getStartTimeForPid(
+  pid: number,
+  runner: CommandRunner = defaultCommandRunner,
+): Promise<string> {
+  if (pid <= 1) return "";
+  if (process.platform === "win32") {
+    return "";
+  }
+  try {
+    const stdout = await runner("ps", ["-p", String(pid), "-o", "lstart="]);
+    return stdout.trim();
+  } catch {
+    return "";
+  }
+}
+
+export async function getAllProcesses(
+  runner: CommandRunner = defaultCommandRunner,
+): Promise<Map<number, ProcessRawInfo>> {
+  const map = new Map<number, ProcessRawInfo>();
+
+  if (process.platform === "win32") {
+    const script = `Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,CommandLine | ConvertTo-Json -Compress`;
+    try {
+      const stdout = await runner("powershell", [
+        "-NoProfile",
+        "-Command",
+        script,
+      ]);
+      const raw = JSON.parse(stdout.trim() || "[]") as Array<{
+        ProcessId?: number;
+        ParentProcessId?: number;
+        Name?: string;
+        CommandLine?: string;
+      }>;
+      const list = Array.isArray(raw) ? raw : [raw];
+      for (const item of list) {
+        const pid = item.ProcessId ?? 0;
+        if (!pid) continue;
+        map.set(pid, {
+          pid,
+          ppid: item.ParentProcessId ?? 0,
+          name: (item.Name ?? "unknown").replace(/\.exe$/i, ""),
+          command: item.CommandLine ?? item.Name ?? "",
+        });
+      }
+    } catch {
+      // return whatever gathered
+    }
+    return map;
+  }
+
+  // Darwin / Linux
+  try {
+    const stdout = await runner("ps", [
+      "-axo",
+      "pid=,ppid=,user=,comm=,command=",
+    ]);
+    const lines = stdout.split("\n");
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+      if (!line) continue;
+      const fields = line.split(/\s+/);
+      if (fields.length < 5) continue;
+      const pid = Number(fields[0]);
+      const ppid = Number(fields[1]);
+      const user = fields[2] ?? "";
+      const comm = fields[3] ?? "";
+      const command = fields.slice(4).join(" ");
+      if (pid) {
+        const name = comm.replace(/^.*\//, "");
+        map.set(pid, {
+          pid,
+          ppid,
+          user,
+          name,
+          command,
+        });
+      }
+    }
+  } catch {
+    // return whatever gathered
+  }
+
+  return map;
+}
+
+export async function getProcessAncestry(
+  listenerPid: number,
+  runner: CommandRunner = defaultCommandRunner,
+  procMap?: Map<number, ProcessRawInfo>,
+): Promise<ProcessTreeNode[]> {
+  const processMap = procMap ?? (await getAllProcesses(runner));
+  const ancestry: ProcessTreeNode[] = [];
+  const seen = new Set<number>();
+
+  let curr: number | undefined = listenerPid;
+  while (curr && curr > 1 && !seen.has(curr)) {
+    seen.add(curr);
+    const raw = processMap.get(curr);
+    if (!raw) break;
+
+    const isListener = curr === listenerPid;
+    const node: ProcessTreeNode = {
+      pid: raw.pid,
+      ppid: raw.ppid,
+      name: raw.name,
+      command: raw.command,
+      user: raw.user,
+      isListener,
+    };
+
+    ancestry.push(node);
+
+    // If this node is an interactive shell or system daemon, stop ascending
+    if (isShellOrRoot(raw.name)) {
+      break;
+    }
+
+    curr = raw.ppid;
+  }
+
+  // Enrich listener node with cwd and startTime
+  if (ancestry.length > 0) {
+    const listenerNode = ancestry[0]!;
+    listenerNode.cwd = await getCwdForPid(listenerNode.pid, runner);
+    listenerNode.startTime = await getStartTimeForPid(listenerNode.pid, runner);
+  }
+
+  return ancestry;
+}
+
+export function getSupervisorRoot(
+  ancestry: readonly ProcessTreeNode[],
+): ProcessTreeNode | null {
+  if (ancestry.length === 0) return null;
+  // If the top process in ancestry is shell/root, the supervisor is the one right beneath it
+  for (let i = ancestry.length - 1; i >= 0; i--) {
+    const node = ancestry[i]!;
+    if (!isShellOrRoot(node.name) && node.pid > 1) {
+      return node;
+    }
+  }
+  return ancestry[0] ?? null;
+}
+
+export function getAllDescendantPids(
+  rootPid: number,
+  processMap: Map<number, ProcessRawInfo>,
+): number[] {
+  const pids: number[] = [];
+  const queue = [rootPid];
+  const seen = new Set<number>([rootPid]);
+
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    for (const [pid, proc] of processMap.entries()) {
+      if (proc.ppid === current && !seen.has(pid)) {
+        seen.add(pid);
+        pids.push(pid);
+        queue.push(pid);
+      }
+    }
+  }
+
+  return pids;
+}
+
+export function formatTreePreview(
+  ancestry: readonly ProcessTreeNode[],
+  listenerPid: number,
+): string {
+  if (ancestry.length === 0) return "";
+  // Find supervisor root and build top-down chain to listener
+  let rootIndex = -1;
+  for (let i = ancestry.length - 1; i >= 0; i--) {
+    if (!isShellOrRoot(ancestry[i]!.name)) {
+      rootIndex = i;
+      break;
+    }
+  }
+  const chain =
+    rootIndex !== -1
+      ? ancestry.slice(0, rootIndex + 1).reverse()
+      : [...ancestry].reverse();
+
+  const lines: string[] = [];
+  chain.forEach((node, index) => {
+    const isListener = node.pid === listenerPid;
+    const namePadded = node.name.padEnd(10);
+    const pidStr = String(node.pid);
+    const listenerTag = isListener ? "  ← listener" : "";
+
+    if (index === 0) {
+      lines.push(`${namePadded} ${pidStr}${listenerTag}`);
+    } else {
+      const indent = "   ".repeat(index - 1);
+      lines.push(`${indent}└─ ${namePadded} ${pidStr}${listenerTag}`);
+    }
+  });
+
+  return lines.join("\n");
+}
+
+export function formatTraceTree(
+  port: number,
+  ancestry: readonly ProcessTreeNode[],
+): string {
+  if (ancestry.length === 0) return `:${port}\n(no process tree found)`;
+  const lines: string[] = [`:${port}`];
+
+  ancestry.forEach((node, index) => {
+    const indent = "   ".repeat(index);
+    const namePadded = node.command
+      ? node.command.slice(0, 24).padEnd(20)
+      : node.name.padEnd(20);
+    lines.push(`${indent}└─ ${namePadded} PID ${node.pid}`);
+    if (node.cwd) {
+      const displayCwd = node.cwd.replace(homedir(), "~");
+      lines.push(`${indent}   cwd: ${displayCwd}`);
+    }
+    if (node.startTime) {
+      lines.push(`${indent}   started: ${node.startTime}`);
+    }
+  });
+
+  return lines.join("\n");
+}
+
+export async function terminateProcessTree(
+  rootPid: number,
+  options: TerminateOptions = {},
+  runner: CommandRunner = defaultCommandRunner,
+): Promise<SignalName> {
+  if (rootPid <= 1 || rootPid === process.pid) {
+    throw new Error(`refusing to terminate protected PID ${rootPid}`);
+  }
+
+  const force = Boolean(options.force);
+  const timeoutMs = options.timeoutMs ?? 0;
+
+  if (process.platform === "win32") {
+    try {
+      await sendSignalWindows(rootPid, force, runner);
+      const gone = await waitUntilGone(rootPid, 2000);
+      if (!gone) throw new Error("process tree is still running");
+      return force ? "SIGKILL" : "SIGTERM";
+    } catch (err: unknown) {
+      if (
+        err instanceof Error &&
+        err.message === "process tree is still running"
+      ) {
+        throw err;
+      }
+      sendSignal(rootPid, force);
+      const gone = await waitUntilGone(rootPid, 2000);
+      if (!gone)
+        throw new Error("process tree is still running", { cause: err });
+      return force ? "SIGKILL" : "SIGTERM";
+    }
+  }
+
+  // Darwin / Linux: gather all descendants + root
+  const processMap = await getAllProcesses(runner);
+  const descendantPids = getAllDescendantPids(rootPid, processMap);
+  const allPids = [rootPid, ...descendantPids].filter(
+    (pid) => pid > 1 && pid !== process.pid,
+  );
+
+  const killAll = (isForce: boolean) => {
+    // Kill leaf descendants first, then root
+    const reversed = [...allPids].reverse();
+    for (const pid of reversed) {
+      try {
+        sendSignal(pid, isForce);
+      } catch {
+        // process might have already exited
+      }
+    }
+  };
+
+  const forceKillAll = async (): Promise<SignalName> => {
+    killAll(true);
+    let allGone = true;
+    for (const pid of allPids) {
+      const gone = await waitUntilGone(pid, 2000);
+      if (!gone) allGone = false;
+    }
+    if (!allGone) {
+      throw new Error("one or more processes in tree did not exit");
+    }
+    return "SIGKILL";
+  };
+
+  if (force) {
+    return await forceKillAll();
+  }
+
+  // Graceful kill
+  killAll(false);
+  const waitTime = timeoutMs > 0 ? timeoutMs : 800;
+  let anyAlive = false;
+  for (const pid of allPids) {
+    if (isProcessAlive(pid)) {
+      const gone = await waitUntilGone(pid, waitTime);
+      if (!gone) anyAlive = true;
+    }
+  }
+
+  if (!anyAlive) {
+    return "SIGTERM";
+  }
+
+  if (timeoutMs <= 0) {
+    throw new Error("process tree is still running");
+  }
+
+  return await forceKillAll();
+}

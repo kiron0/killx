@@ -8,6 +8,18 @@ import {
   EXIT_TERMINATION,
 } from "../errors";
 import { terminateProcess } from "../process/kill";
+import {
+  formatTreePreview,
+  getProcessAncestry,
+  getSupervisorRoot,
+  terminateProcessTree,
+} from "../process/tree";
+import {
+  findDockerContainerForPort,
+  isDockerProcess,
+  stopDockerContainer,
+} from "../platform/docker";
+import { defaultCommandRunner, type CommandRunner } from "../platform/command";
 import type { KillResult, PlatformProvider, ProcessInfo } from "../types";
 import type { Printer } from "../output";
 
@@ -16,9 +28,11 @@ export interface RunKillOptions {
   hasRange?: boolean | undefined;
   force?: boolean | undefined;
   yes?: boolean | undefined;
+  tree?: boolean | undefined;
   timeoutMs?: number | undefined;
   provider: PlatformProvider;
   printer: Printer;
+  runner?: CommandRunner | undefined;
 }
 
 export function isTargetUnsafe(
@@ -47,17 +61,21 @@ export async function runKill(options: RunKillOptions): Promise<void> {
     hasRange = false,
     force = false,
     yes = false,
+    tree = false,
     timeoutMs = 0,
     provider,
     printer,
+    runner = defaultCommandRunner,
   } = options;
 
   const targets: ProcessInfo[] = [];
   const seenPid = new Set<number>();
+  const portsWithListeners = new Set<number>();
 
   for (const port of ports) {
     const matches = await provider.find(port);
     for (const match of matches) {
+      portsWithListeners.add(port);
       if (!seenPid.has(match.pid)) {
         targets.push(match);
         seenPid.add(match.pid);
@@ -76,76 +94,191 @@ export async function runKill(options: RunKillOptions): Promise<void> {
     throw new CliError(EXIT_NOT_FOUND);
   }
 
-  const unsafe = isTargetUnsafe(targets, hasRange);
-  if (unsafe && !yes) {
-    if (process.stdin.isTTY && process.stdout.isTTY) {
-      printer.line(`Found ${targets.length} process(es):\n`);
-      for (const t of targets) {
-        printer.line(`${t.port}  ${t.process}  PID ${t.pid}  ${t.user}`);
+  const results: KillResult[] = [];
+  const handledDockerPorts = new Set<number>();
+
+  for (const port of portsWithListeners) {
+    const portTargets = targets.filter((t) => t.port === port);
+    const hasDockerHint = portTargets.some((t) =>
+      isDockerProcess(t.process, t.command),
+    );
+
+    const dockerInfo = hasDockerHint
+      ? await findDockerContainerForPort(port, runner)
+      : null;
+
+    if (dockerInfo) {
+      handledDockerPorts.add(port);
+      if (!yes) {
+        if (process.stdin.isTTY && process.stdout.isTTY) {
+          printer.line(
+            `Port ${port} is published by Docker container "${dockerInfo.name}".\n`,
+          );
+          const confirmed = await confirm({
+            message: "Stop container?",
+            initialValue: false,
+          });
+          if (typeof confirmed === "symbol" || !confirmed) {
+            throw new CliError(EXIT_GENERIC, "Kill cancelled");
+          }
+        } else {
+          throw new CliError(
+            EXIT_GENERIC,
+            `Port ${port} is published by Docker container "${dockerInfo.name}". Use --yes to confirm stopping container in non-interactive shell`,
+          );
+        }
       }
-      printer.line("");
-      const confirmed = await confirm({
-        message: `Kill all ${targets.length} process(es)?`,
-        initialValue: false,
-      });
-      if (typeof confirmed === "symbol" || !confirmed) {
-        throw new CliError(EXIT_GENERIC, "Kill cancelled");
+
+      try {
+        await stopDockerContainer(dockerInfo.name, force, runner);
+        results.push({
+          success: true,
+          port,
+          process: `docker:${dockerInfo.name}`,
+          signal: force ? "SIGKILL" : "SIGTERM",
+        });
+        if (!printer.json) {
+          printer.success(
+            `Stopped Docker container "${dockerInfo.name}" on :${port}`,
+          );
+        }
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        results.push({
+          success: false,
+          port,
+          process: `docker:${dockerInfo.name}`,
+          error: message,
+        });
       }
-    } else {
-      // In non-interactive environments without --yes, abort safely
-      throw new CliError(
-        EXIT_GENERIC,
-        "Destructive kill of multiple/unsafe targets requires --yes confirmation in non-interactive shell",
-      );
     }
   }
 
-  targets.sort((a, b) => a.port - b.port);
-  const results: KillResult[] = [];
-  let failed = false;
-  let permission = false;
+  const remainingTargets = targets.filter(
+    (t) => !handledDockerPorts.has(t.port),
+  );
 
-  for (const target of targets) {
-    try {
-      const signal = await terminateProcess(target.pid, {
-        force,
-        timeoutMs,
-      });
-      results.push({
-        success: true,
-        port: target.port,
+  if (tree && remainingTargets.length > 0) {
+    for (const target of remainingTargets) {
+      const ancestry = await getProcessAncestry(target.pid, runner);
+      const supervisor = getSupervisorRoot(ancestry) ?? {
         pid: target.pid,
-        process: target.process,
-        signal,
-      });
-      if (!printer.json) {
-        printer.success(
-          `Killed ${target.process} (PID ${target.pid}) on :${target.port}`,
+        name: target.process,
+        command: target.command,
+        ppid: 1,
+      };
+
+      if (!yes) {
+        if (process.stdin.isTTY && process.stdout.isTTY) {
+          printer.line(`Port :${target.port}\n`);
+          printer.line(formatTreePreview(ancestry, target.pid));
+          printer.line("");
+          const confirmed = await confirm({
+            message: "Kill process tree?",
+            initialValue: false,
+          });
+          if (typeof confirmed === "symbol" || !confirmed) {
+            throw new CliError(EXIT_GENERIC, "Kill cancelled");
+          }
+        } else {
+          throw new CliError(
+            EXIT_GENERIC,
+            "Destructive tree kill requires --yes confirmation in non-interactive shell",
+          );
+        }
+      }
+
+      try {
+        const signal = await terminateProcessTree(
+          supervisor.pid,
+          { force, timeoutMs },
+          runner,
+        );
+        results.push({
+          success: true,
+          port: target.port,
+          pid: supervisor.pid,
+          process: supervisor.name,
+          signal,
+        });
+        if (!printer.json) {
+          printer.success(
+            `Killed process tree for :${target.port} (root ${supervisor.name} PID ${supervisor.pid})`,
+          );
+        }
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        results.push({
+          success: false,
+          port: target.port,
+          pid: supervisor.pid,
+          process: supervisor.name,
+          error: message,
+        });
+      }
+    }
+  } else if (remainingTargets.length > 0) {
+    const unsafe = isTargetUnsafe(remainingTargets, hasRange);
+    if (unsafe && !yes) {
+      if (process.stdin.isTTY && process.stdout.isTTY) {
+        printer.line(`Found ${remainingTargets.length} process(es):\n`);
+        for (const t of remainingTargets) {
+          printer.line(`${t.port}  ${t.process}  PID ${t.pid}  ${t.user}`);
+        }
+        printer.line("");
+        const confirmed = await confirm({
+          message: `Kill all ${remainingTargets.length} process(es)?`,
+          initialValue: false,
+        });
+        if (typeof confirmed === "symbol" || !confirmed) {
+          throw new CliError(EXIT_GENERIC, "Kill cancelled");
+        }
+      } else {
+        throw new CliError(
+          EXIT_GENERIC,
+          "Destructive kill of multiple/unsafe targets requires --yes confirmation in non-interactive shell",
         );
       }
-    } catch (error: unknown) {
-      failed = true;
-      const message = error instanceof Error ? error.message : String(error);
-      const isPerm =
-        Boolean(
-          error &&
-          typeof error === "object" &&
-          "code" in error &&
-          (error as { code: string }).code === "EPERM",
-        ) ||
-        message.includes("EPERM") ||
-        message.includes("Operation not permitted") ||
-        message.includes("Access is denied");
-      if (isPerm) {
-        permission = true;
+    }
+
+    remainingTargets.sort((a, b) => a.port - b.port);
+    for (const target of remainingTargets) {
+      try {
+        const signal = options.runner
+          ? await terminateProcess(
+              target.pid,
+              {
+                force,
+                timeoutMs,
+              },
+              runner,
+            )
+          : await terminateProcess(target.pid, {
+              force,
+              timeoutMs,
+            });
+        results.push({
+          success: true,
+          port: target.port,
+          pid: target.pid,
+          process: target.process,
+          signal,
+        });
+        if (!printer.json) {
+          printer.success(
+            `Killed ${target.process} (PID ${target.pid}) on :${target.port}`,
+          );
+        }
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        results.push({
+          success: false,
+          port: target.port,
+          pid: target.pid,
+          process: target.process,
+          error: message,
+        });
       }
-      results.push({
-        success: false,
-        port: target.port,
-        pid: target.pid,
-        process: target.process,
-        error: message,
-      });
     }
   }
 
@@ -153,18 +286,25 @@ export async function runKill(options: RunKillOptions): Promise<void> {
     printer.encodeSingleOrList(results);
   }
 
-  if (failed) {
-    const firstFailed = results.find((r) => !r.success);
-    const lastError = firstFailed?.error;
-    if (permission) {
+  const failed = results.filter((r) => !r.success);
+  if (failed.length > 0) {
+    const firstFailed = failed[0]!;
+    const lastError = firstFailed.error;
+    const isPerm =
+      lastError?.includes("EPERM") ||
+      lastError?.includes("Operation not permitted") ||
+      lastError?.includes("Access is denied");
+
+    if (isPerm) {
       const msg =
-        results.length === 1 && firstFailed
+        results.length === 1
           ? `✗ Permission denied while terminating ${firstFailed.process} (PID ${firstFailed.pid})\n\nTry:\n  sudo killx ${firstFailed.port}`
           : "✗ Permission denied while terminating process\n\nTry:\n  sudo killx <port>";
       throw new CliError(EXIT_PERMISSION, msg, lastError);
     }
+
     const msg =
-      results.length === 1 && firstFailed
+      results.length === 1
         ? `✗ ${firstFailed.process} (PID ${firstFailed.pid}) did not exit\n\nTry:\n  killx ${firstFailed.port} --force`
         : "✗ Process could not be terminated; retry with --force";
     throw new CliError(EXIT_TERMINATION, msg, lastError);

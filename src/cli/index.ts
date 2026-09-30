@@ -31,6 +31,8 @@ import {
   runKill,
   runListCommand,
   runProcessCommand,
+  runRunCommand,
+  runTraceCommand,
   runWaitCommand,
   runWatchCommand,
 } from "../commands";
@@ -67,6 +69,8 @@ Usage:
   killx                       Interactive Clack UI (inspect/kill listening ports)
   killx <port...>             Kill listeners on specified ports
   killx kill <port...>        Kill listeners on specified ports
+  killx run <port...> -- <cmd...>  Free port(s) then execute command
+  killx trace <port>          Explain process tree and supervisor
   killx info <port>           Show listener details (alias: i)
   killx check <port>          Check port availability (alias: c)
   killx check-update          Check npm registry for updates
@@ -74,16 +78,18 @@ Usage:
   killx list [range]          List listening ports (alias: ls)
   killx free [port]           Find a free port
   killx ps [query]            Search processes (alias: process)
-  killx dev                   Stop common development servers
+  killx dev [dir]             Stop common development servers (scope with [dir] or --cwd)
   killx wait <port>           Wait for port state
   killx watch <port>          Watch port changes
 
 Options:
   -f, --force                 Send SIGKILL immediately
   -y, --yes                   Skip safety confirmation
+  -t, --tree                  Kill entire process tree and supervisor
   -q, --quiet                 Suppress successful output
   -j, --json                  Write JSON output
   -v, --verbose               Show extra error detail
+      --cwd <path>            Scope dev command to project root
       --timeout <seconds>     Seconds before escalating SIGTERM to SIGKILL
       --occupied              Wait until port becomes occupied (for wait)
       --interval <ms>         Poll interval in ms (for watch)
@@ -306,6 +312,11 @@ async function runInteractiveCommandMenu(
         hint: "random free port",
       },
       {
+        value: "trace",
+        label: "Trace port ancestry / supervisor",
+        hint: "explain who owns or restarts a port",
+      },
+      {
         value: "update",
         label: "Check for updates",
         hint: "check npm registry",
@@ -460,6 +471,24 @@ async function runInteractiveCommandMenu(
 
     if (chosen === "free") {
       await runFreeCommand(undefined, printer);
+      printThanks();
+      return EXIT_SUCCESS;
+    }
+
+    if (chosen === "trace") {
+      const portInput = await text({
+        message: "Enter port to trace:",
+        placeholder: "e.g. 3000",
+        validate(val) {
+          if (!val || !val.trim()) return "Please enter a port";
+        },
+      });
+      if (isCancel(portInput)) {
+        cancel("Cancelled.");
+        printThanks();
+        return EXIT_SUCCESS;
+      }
+      await runTraceCommand(String(portInput).trim(), provider, printer);
       printThanks();
       return EXIT_SUCCESS;
     }
@@ -734,11 +763,45 @@ export async function runCli(argv: readonly string[]): Promise<number> {
           ports,
           hasRange,
           force: parsed.flags.force,
+          tree: parsed.flags.tree,
           yes: parsed.flags.yes,
           timeoutMs: timeoutSeconds * 1000,
           provider,
           printer,
         });
+        break;
+      }
+
+      case "run": {
+        if (parsed.positionals.length === 0) {
+          throw invalid("run requires at least one port");
+        }
+        if (!parsed.runCommand || parsed.runCommand.length === 0) {
+          throw invalid(
+            "run requires a command to execute (e.g. killx run 3000 -- npm run dev)",
+          );
+        }
+        const { ports } = expandPorts(parsed.positionals);
+        const timeoutSeconds = parsed.flags.timeout ?? 0;
+        if (timeoutSeconds < 0) {
+          throw invalid("timeout cannot be negative");
+        }
+        const exitCode = await runRunCommand({
+          ports,
+          command: parsed.runCommand,
+          force: parsed.flags.force,
+          tree: parsed.flags.tree,
+          timeoutMs: timeoutSeconds * 1000,
+          provider,
+          printer,
+        });
+        if (!parsed.flags.json) printThanks();
+        return exitCode;
+      }
+
+      case "trace": {
+        const portArg = singlePort("trace", parsed.positionals);
+        await runTraceCommand(portArg, provider, printer);
         break;
       }
 
@@ -795,10 +858,12 @@ export async function runCli(argv: readonly string[]): Promise<number> {
       }
 
       case "dev": {
-        if (parsed.positionals.length !== 0) {
-          throw invalid("dev accepts no arguments");
+        if (parsed.positionals.length > 1) {
+          throw invalid("dev accepts at most one directory path");
         }
+        const targetDir = parsed.flags.cwd ?? parsed.positionals[0];
         await runDevCommand({
+          cwd: targetDir,
           force: parsed.flags.force,
           yes: parsed.flags.yes,
           provider,
