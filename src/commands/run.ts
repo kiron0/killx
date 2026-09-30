@@ -123,9 +123,7 @@ export async function runRunCommand(
     const forwardSignal = (sig: NodeJS.Signals) => {
       try {
         child.kill(sig);
-      } catch {
-        // ignore
-      }
+      } catch {}
     };
 
     const sigintHandler = () => forwardSignal("SIGINT");

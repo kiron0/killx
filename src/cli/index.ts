@@ -55,9 +55,7 @@ export async function getPackageVersion(): Promise<string> {
       const content = await readFile(pkgPath, "utf8");
       const parsed = JSON.parse(content) as { version?: string };
       if (parsed.version) return parsed.version;
-    } catch {
-      // try next
-    }
+    } catch {}
   }
   return "0.1.1";
 }
@@ -418,17 +416,20 @@ async function runInteractiveCommandMenu(
         message: `Kill ${matches.length} matching process(es)?`,
         initialValue: false,
       });
-      if (!isCancel(shouldKill) && shouldKill) {
-        await runProcessCommand(
-          {
-            query: q,
-            kill: true,
-            force: flags.force,
-            yes: true,
-          },
-          printer,
-        );
+      if (isCancel(shouldKill) || !shouldKill) {
+        cancel("Cancelled.");
+        printThanks();
+        return EXIT_SUCCESS;
       }
+      await runProcessCommand(
+        {
+          query: q,
+          kill: true,
+          force: flags.force,
+          yes: true,
+        },
+        printer,
+      );
       printThanks();
       return EXIT_SUCCESS;
     }
@@ -539,7 +540,6 @@ async function runInteractiveMenu(
       );
     }
 
-    // Deduplicate and group by port
     const portMap = new Map<number, ProcessInfo[]>();
     for (const proc of listeners) {
       const list = portMap.get(proc.port) ?? [];
@@ -707,7 +707,6 @@ export async function runCli(argv: readonly string[]): Promise<number> {
 
   const provider = createPlatformProvider();
 
-  // If interactive flag is passed explicitly: launch command menu
   if (parsed.flags.interactive) {
     if (process.stdin.isTTY && process.stdout.isTTY && !parsed.flags.json) {
       return await runInteractiveCommandMenu(
@@ -719,7 +718,6 @@ export async function runCli(argv: readonly string[]): Promise<number> {
     }
   }
 
-  // If no command and no positionals: launch Clack UI if interactive TTY
   if (!parsed.command) {
     if (process.stdin.isTTY && process.stdout.isTTY && !parsed.flags.json) {
       return await runInteractiveMenu(provider, printer, parsed.flags, version);
@@ -907,6 +905,13 @@ export async function runCli(argv: readonly string[]): Promise<number> {
     if (cliError.message) {
       process.stderr.write(`${cliError.message}\n`);
     }
+    if (
+      cliError.message === "Kill cancelled" ||
+      cliError.message.toLowerCase().includes("cancel") ||
+      cliError.message.toLowerCase().includes("aborted")
+    ) {
+      if (!parsed?.flags?.json) printThanks();
+    }
     if (parsed?.flags?.verbose) {
       const verboseSource =
         cliError.causeError ??
@@ -932,12 +937,10 @@ export async function runCli(argv: readonly string[]): Promise<number> {
 }
 
 async function main(): Promise<void> {
-  if (process.stdin.isTTY) {
-    process.once("SIGINT", () => {
-      printThanks();
-      process.exit(130);
-    });
-  }
+  process.once("SIGINT", () => {
+    printThanks();
+    process.exit(130);
+  });
   try {
     const code = await runCli(process.argv.slice(2));
     if (code !== EXIT_SUCCESS) {
@@ -951,7 +954,6 @@ async function main(): Promise<void> {
   }
 }
 
-// Only auto-execute if called directly as entry point
 const scriptPath = process.argv[1] ?? "";
 const isDirectCli =
   Boolean(scriptPath) &&

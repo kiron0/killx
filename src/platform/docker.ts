@@ -78,13 +78,9 @@ export async function findDockerContainerForPort(
             publishedPort: port,
           };
         }
-      } catch {
-        // Fall back to tab-separated if line isn't valid JSON
-      }
+      } catch {}
     }
-  } catch {
-    // Docker CLI not available, daemon not running, or failed
-  }
+  } catch {}
 
   try {
     const stdout = await runner(
@@ -110,9 +106,7 @@ export async function findDockerContainerForPort(
         }
       }
     }
-  } catch {
-    // ignore
-  }
+  } catch {}
 
   return null;
 }

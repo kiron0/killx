@@ -148,9 +148,7 @@ export async function processBelongsToProject(
         }
       }
     }
-  } catch {
-    // ignore
-  }
+  } catch {}
 
   return false;
 }

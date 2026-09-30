@@ -67,7 +67,6 @@ export async function getCwdForPid(
   if (process.platform === "win32") {
     return "";
   }
-  // Darwin / Linux: try lsof -a -p <pid> -d cwd -Fn
   try {
     const stdout = await runner("lsof", [
       "-a",
@@ -82,19 +81,14 @@ export async function getCwdForPid(
         return line.slice(1).trim();
       }
     }
-  } catch {
-    // try next
-  }
+  } catch {}
 
-  // Linux: readlink /proc/<pid>/cwd
   if (process.platform === "linux") {
     try {
       const stdout = await runner("readlink", [`/proc/${pid}/cwd`]);
       const res = stdout.trim();
       if (res) return res;
-    } catch {
-      // ignore
-    }
+    } catch {}
   }
 
   return "";
@@ -146,13 +140,10 @@ export async function getAllProcesses(
           command: item.CommandLine ?? item.Name ?? "",
         });
       }
-    } catch {
-      // return whatever gathered
-    }
+    } catch {}
     return map;
   }
 
-  // Darwin / Linux
   try {
     const stdout = await runner("ps", [
       "-axo",
@@ -180,9 +171,7 @@ export async function getAllProcesses(
         });
       }
     }
-  } catch {
-    // return whatever gathered
-  }
+  } catch {}
 
   return map;
 }
@@ -214,7 +203,6 @@ export async function getProcessAncestry(
 
     ancestry.push(node);
 
-    // If this node is an interactive shell or system daemon, stop ascending
     if (isShellOrRoot(raw.name)) {
       break;
     }
@@ -222,7 +210,6 @@ export async function getProcessAncestry(
     curr = raw.ppid;
   }
 
-  // Enrich listener node with cwd and startTime
   if (ancestry.length > 0) {
     const listenerNode = ancestry[0]!;
     listenerNode.cwd = await getCwdForPid(listenerNode.pid, runner);
@@ -236,7 +223,6 @@ export function getSupervisorRoot(
   ancestry: readonly ProcessTreeNode[],
 ): ProcessTreeNode | null {
   if (ancestry.length === 0) return null;
-  // If the top process in ancestry is shell/root, the supervisor is the one right beneath it
   for (let i = ancestry.length - 1; i >= 0; i--) {
     const node = ancestry[i]!;
     if (!isShellOrRoot(node.name) && node.pid > 1) {
@@ -273,7 +259,6 @@ export function formatTreePreview(
   listenerPid: number,
 ): string {
   if (ancestry.length === 0) return "";
-  // Find supervisor root and build top-down chain to listener
   let rootIndex = -1;
   for (let i = ancestry.length - 1; i >= 0; i--) {
     if (!isShellOrRoot(ancestry[i]!.name)) {
@@ -362,7 +347,6 @@ export async function terminateProcessTree(
     }
   }
 
-  // Darwin / Linux: gather all descendants + root
   const processMap = await getAllProcesses(runner);
   const descendantPids = getAllDescendantPids(rootPid, processMap);
   const allPids = [rootPid, ...descendantPids].filter(
@@ -370,14 +354,11 @@ export async function terminateProcessTree(
   );
 
   const killAll = (isForce: boolean) => {
-    // Kill leaf descendants first, then root
     const reversed = [...allPids].reverse();
     for (const pid of reversed) {
       try {
         sendSignal(pid, isForce);
-      } catch {
-        // process might have already exited
-      }
+      } catch {}
     }
   };
 
@@ -398,7 +379,6 @@ export async function terminateProcessTree(
     return await forceKillAll();
   }
 
-  // Graceful kill
   killAll(false);
   const waitTime = timeoutMs > 0 ? timeoutMs : 800;
   let anyAlive = false;

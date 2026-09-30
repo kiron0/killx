@@ -1,5 +1,5 @@
 import { userInfo } from "node:os";
-import { confirm } from "@clack/prompts";
+import { cancel, confirm } from "@clack/prompts";
 import {
   CliError,
   EXIT_GENERIC,
@@ -43,9 +43,7 @@ export function isTargetUnsafe(
   let currentUsername = "";
   try {
     currentUsername = userInfo().username;
-  } catch {
-    // ignore
-  }
+  } catch {}
 
   for (const t of targets) {
     if (t.pid === 1) return true;
@@ -119,6 +117,7 @@ export async function runKill(options: RunKillOptions): Promise<void> {
             initialValue: false,
           });
           if (typeof confirmed === "symbol" || !confirmed) {
+            cancel("Cancelled.");
             throw new CliError(EXIT_GENERIC, "Kill cancelled");
           }
         } else {
@@ -178,6 +177,7 @@ export async function runKill(options: RunKillOptions): Promise<void> {
             initialValue: false,
           });
           if (typeof confirmed === "symbol" || !confirmed) {
+            cancel("Cancelled.");
             throw new CliError(EXIT_GENERIC, "Kill cancelled");
           }
         } else {
@@ -231,6 +231,7 @@ export async function runKill(options: RunKillOptions): Promise<void> {
           initialValue: false,
         });
         if (typeof confirmed === "symbol" || !confirmed) {
+          cancel("Cancelled.");
           throw new CliError(EXIT_GENERIC, "Kill cancelled");
         }
       } else {
