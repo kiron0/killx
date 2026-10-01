@@ -20,6 +20,7 @@ export default tseslint.config(
     },
     rules: {
       "@typescript-eslint/no-confusing-void-expression": "off",
+      "no-empty": ["error", { allowEmptyCatch: true }],
     },
   },
 );

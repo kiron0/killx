@@ -60,9 +60,7 @@ export async function checkUpdateManually(
         checkedAt: now,
         latestVersion,
       });
-    } catch {
-      // Manual checks handle network errors gracefully without crashing.
-    }
+    } catch {}
   }
 
   const effectiveLatest = latestVersion ?? currentVersion;
@@ -105,9 +103,7 @@ export async function checkForUpdate(
         checkedAt: now,
         latestVersion,
       });
-    } catch {
-      // Update checks must never block normal commands.
-    }
+    } catch {}
   }
 
   if (
@@ -276,7 +272,5 @@ async function writeCache(path: string, value: UpdateCache): Promise<void> {
   try {
     await mkdir(dirname(path), { recursive: true });
     await writeFile(path, JSON.stringify(value), { mode: 0o600 });
-  } catch {
-    // Read-only homes must not break normal commands.
-  }
+  } catch {}
 }

@@ -39,7 +39,6 @@ export async function searchProcesses(
     }
   }
 
-  // Darwin and Linux
   const stdout = await runner("ps", [
     "-axo",
     "pid=,user=,%cpu=,%mem=,command=",

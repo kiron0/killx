@@ -31,6 +31,8 @@ import {
   runKill,
   runListCommand,
   runProcessCommand,
+  runRunCommand,
+  runTraceCommand,
   runWaitCommand,
   runWatchCommand,
 } from "../commands";
@@ -53,11 +55,9 @@ export async function getPackageVersion(): Promise<string> {
       const content = await readFile(pkgPath, "utf8");
       const parsed = JSON.parse(content) as { version?: string };
       if (parsed.version) return parsed.version;
-    } catch {
-      // try next
-    }
+    } catch {}
   }
-  return "0.1.1";
+  return "1.0.0";
 }
 
 export function printHelp(printer: Printer): void {
@@ -67,6 +67,8 @@ Usage:
   killx                       Interactive Clack UI (inspect/kill listening ports)
   killx <port...>             Kill listeners on specified ports
   killx kill <port...>        Kill listeners on specified ports
+  killx run <port...> -- <cmd...>  Free port(s) then execute command
+  killx trace <port>          Explain process tree and supervisor
   killx info <port>           Show listener details (alias: i)
   killx check <port>          Check port availability (alias: c)
   killx check-update          Check npm registry for updates
@@ -74,16 +76,18 @@ Usage:
   killx list [range]          List listening ports (alias: ls)
   killx free [port]           Find a free port
   killx ps [query]            Search processes (alias: process)
-  killx dev                   Stop common development servers
+  killx dev [dir]             Stop common development servers (scope with [dir] or --cwd)
   killx wait <port>           Wait for port state
   killx watch <port>          Watch port changes
 
 Options:
   -f, --force                 Send SIGKILL immediately
   -y, --yes                   Skip safety confirmation
+  -t, --tree                  Kill entire process tree and supervisor
   -q, --quiet                 Suppress successful output
   -j, --json                  Write JSON output
   -v, --verbose               Show extra error detail
+      --cwd <path>            Scope dev command to project root
       --timeout <seconds>     Seconds before escalating SIGTERM to SIGKILL
       --occupied              Wait until port becomes occupied (for wait)
       --interval <ms>         Poll interval in ms (for watch)
@@ -306,6 +310,11 @@ async function runInteractiveCommandMenu(
         hint: "random free port",
       },
       {
+        value: "trace",
+        label: "Trace port ancestry / supervisor",
+        hint: "explain who owns or restarts a port",
+      },
+      {
         value: "update",
         label: "Check for updates",
         hint: "check npm registry",
@@ -355,8 +364,30 @@ async function runInteractiveCommandMenu(
     }
 
     if (chosen === "dev") {
+      const scope = await select({
+        message: "Select cleanup scope:",
+        options: [
+          {
+            value: "project",
+            label: "Current project directory",
+            hint: "scope dev server clean to current project/git root",
+          },
+          {
+            value: "global",
+            label: "Global (all dev servers)",
+            hint: "terminate dev processes across system",
+          },
+        ],
+        initialValue: "project",
+      });
+      if (isCancel(scope)) {
+        cancel("Cancelled.");
+        printThanks();
+        return EXIT_SUCCESS;
+      }
       try {
         await runDevCommand({
+          cwd: scope === "project" ? (flags.cwd ?? ".") : undefined,
           force: flags.force,
           yes: flags.yes,
           provider,
@@ -407,17 +438,20 @@ async function runInteractiveCommandMenu(
         message: `Kill ${matches.length} matching process(es)?`,
         initialValue: false,
       });
-      if (!isCancel(shouldKill) && shouldKill) {
-        await runProcessCommand(
-          {
-            query: q,
-            kill: true,
-            force: flags.force,
-            yes: true,
-          },
-          printer,
-        );
+      if (isCancel(shouldKill) || !shouldKill) {
+        cancel("Cancelled.");
+        printThanks();
+        return EXIT_SUCCESS;
       }
+      await runProcessCommand(
+        {
+          query: q,
+          kill: true,
+          force: flags.force,
+          yes: true,
+        },
+        printer,
+      );
       printThanks();
       return EXIT_SUCCESS;
     }
@@ -460,6 +494,24 @@ async function runInteractiveCommandMenu(
 
     if (chosen === "free") {
       await runFreeCommand(undefined, printer);
+      printThanks();
+      return EXIT_SUCCESS;
+    }
+
+    if (chosen === "trace") {
+      const portInput = await text({
+        message: "Enter port to trace:",
+        placeholder: "e.g. 3000",
+        validate(val) {
+          if (!val || !val.trim()) return "Please enter a port";
+        },
+      });
+      if (isCancel(portInput)) {
+        cancel("Cancelled.");
+        printThanks();
+        return EXIT_SUCCESS;
+      }
+      await runTraceCommand(String(portInput).trim(), provider, printer);
       printThanks();
       return EXIT_SUCCESS;
     }
@@ -510,7 +562,6 @@ async function runInteractiveMenu(
       );
     }
 
-    // Deduplicate and group by port
     const portMap = new Map<number, ProcessInfo[]>();
     for (const proc of listeners) {
       const list = portMap.get(proc.port) ?? [];
@@ -559,6 +610,16 @@ async function runInteractiveMenu(
           label: "Force kill processes",
           hint: "SIGKILL immediately",
         },
+        {
+          value: "tree",
+          label: "Kill process tree & supervisor",
+          hint: "--tree: stops auto-respawn loops",
+        },
+        {
+          value: "trace",
+          label: "Trace process ancestry",
+          hint: "explain who owns or restarts port",
+        },
         { value: "info", label: "Inspect listener details" },
         { value: "check", label: "Check availability" },
       ],
@@ -567,6 +628,28 @@ async function runInteractiveMenu(
 
     if (isCancel(action)) {
       cancel("Cancelled.");
+      printThanks();
+      return EXIT_SUCCESS;
+    }
+
+    if (action === "tree") {
+      await runKill({
+        ports: selectedPorts,
+        tree: true,
+        force: Boolean(flags.force),
+        yes: flags.yes,
+        timeoutMs: (flags.timeout ?? 0) * 1000,
+        provider,
+        printer,
+      });
+      printThanks();
+      return EXIT_SUCCESS;
+    }
+
+    if (action === "trace") {
+      for (const port of selectedPorts) {
+        await runTraceCommand(String(port), provider, printer);
+      }
       printThanks();
       return EXIT_SUCCESS;
     }
@@ -678,7 +761,6 @@ export async function runCli(argv: readonly string[]): Promise<number> {
 
   const provider = createPlatformProvider();
 
-  // If interactive flag is passed explicitly: launch command menu
   if (parsed.flags.interactive) {
     if (process.stdin.isTTY && process.stdout.isTTY && !parsed.flags.json) {
       return await runInteractiveCommandMenu(
@@ -690,7 +772,6 @@ export async function runCli(argv: readonly string[]): Promise<number> {
     }
   }
 
-  // If no command and no positionals: launch Clack UI if interactive TTY
   if (!parsed.command) {
     if (process.stdin.isTTY && process.stdout.isTTY && !parsed.flags.json) {
       return await runInteractiveMenu(provider, printer, parsed.flags, version);
@@ -734,11 +815,45 @@ export async function runCli(argv: readonly string[]): Promise<number> {
           ports,
           hasRange,
           force: parsed.flags.force,
+          tree: parsed.flags.tree,
           yes: parsed.flags.yes,
           timeoutMs: timeoutSeconds * 1000,
           provider,
           printer,
         });
+        break;
+      }
+
+      case "run": {
+        if (parsed.positionals.length === 0) {
+          throw invalid("run requires at least one port");
+        }
+        if (!parsed.runCommand || parsed.runCommand.length === 0) {
+          throw invalid(
+            "run requires a command to execute (e.g. killx run 3000 -- npm run dev)",
+          );
+        }
+        const { ports } = expandPorts(parsed.positionals);
+        const timeoutSeconds = parsed.flags.timeout ?? 0;
+        if (timeoutSeconds < 0) {
+          throw invalid("timeout cannot be negative");
+        }
+        const exitCode = await runRunCommand({
+          ports,
+          command: parsed.runCommand,
+          force: parsed.flags.force,
+          tree: parsed.flags.tree,
+          timeoutMs: timeoutSeconds * 1000,
+          provider,
+          printer,
+        });
+        if (!parsed.flags.json) printThanks();
+        return exitCode;
+      }
+
+      case "trace": {
+        const portArg = singlePort("trace", parsed.positionals);
+        await runTraceCommand(portArg, provider, printer);
         break;
       }
 
@@ -795,10 +910,12 @@ export async function runCli(argv: readonly string[]): Promise<number> {
       }
 
       case "dev": {
-        if (parsed.positionals.length !== 0) {
-          throw invalid("dev accepts no arguments");
+        if (parsed.positionals.length > 1) {
+          throw invalid("dev accepts at most one directory path");
         }
+        const targetDir = parsed.flags.cwd ?? parsed.positionals[0];
         await runDevCommand({
+          cwd: targetDir,
           force: parsed.flags.force,
           yes: parsed.flags.yes,
           provider,
@@ -842,6 +959,13 @@ export async function runCli(argv: readonly string[]): Promise<number> {
     if (cliError.message) {
       process.stderr.write(`${cliError.message}\n`);
     }
+    if (
+      cliError.message === "Kill cancelled" ||
+      cliError.message.toLowerCase().includes("cancel") ||
+      cliError.message.toLowerCase().includes("aborted")
+    ) {
+      if (!parsed?.flags?.json) printThanks();
+    }
     if (parsed?.flags?.verbose) {
       const verboseSource =
         cliError.causeError ??
@@ -867,12 +991,10 @@ export async function runCli(argv: readonly string[]): Promise<number> {
 }
 
 async function main(): Promise<void> {
-  if (process.stdin.isTTY) {
-    process.once("SIGINT", () => {
-      printThanks();
-      process.exit(130);
-    });
-  }
+  process.once("SIGINT", () => {
+    printThanks();
+    process.exit(130);
+  });
   try {
     const code = await runCli(process.argv.slice(2));
     if (code !== EXIT_SUCCESS) {
@@ -886,7 +1008,6 @@ async function main(): Promise<void> {
   }
 }
 
-// Only auto-execute if called directly as entry point
 const scriptPath = process.argv[1] ?? "";
 const isDirectCli =
   Boolean(scriptPath) &&

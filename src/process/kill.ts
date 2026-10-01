@@ -67,7 +67,6 @@ export async function terminateProcess(
       try {
         await sendSignalWindows(pid, isForce, runner);
       } catch {
-        // Fall back to node process.kill
         sendSignal(pid, isForce);
       }
     } else {
@@ -88,7 +87,6 @@ export async function terminateProcess(
     return await forceKill();
   }
 
-  // Graceful termination
   await killFn(false);
   const waitTime = timeoutMs > 0 ? timeoutMs : 500;
   const gone = await waitUntilGone(pid, waitTime);

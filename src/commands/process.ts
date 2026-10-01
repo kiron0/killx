@@ -1,4 +1,4 @@
-import { confirm } from "@clack/prompts";
+import { cancel, confirm } from "@clack/prompts";
 import {
   CliError,
   EXIT_GENERIC,
@@ -71,6 +71,7 @@ async function killProcessMatches(
         initialValue: false,
       });
       if (typeof confirmed === "symbol" || !confirmed) {
+        cancel("Cancelled.");
         throw new CliError(EXIT_GENERIC, "Kill cancelled");
       }
     } else {

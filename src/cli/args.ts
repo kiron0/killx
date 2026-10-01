@@ -11,11 +11,14 @@ export type CliCommand =
   | "wait"
   | "watch"
   | "check-update"
-  | "update";
+  | "update"
+  | "run"
+  | "trace";
 
 export interface ParsedArgs {
   command?: CliCommand | undefined;
   positionals: string[];
+  runCommand?: string[] | undefined;
   flags: {
     json?: boolean | undefined;
     quiet?: boolean | undefined;
@@ -34,6 +37,8 @@ export interface ParsedArgs {
     interactive?: boolean | undefined;
     checkUpdate?: boolean | undefined;
     noUpdateCheck?: boolean | undefined;
+    tree?: boolean | undefined;
+    cwd?: string | undefined;
   };
 }
 
@@ -53,6 +58,9 @@ const COMMAND_ALIASES: Record<string, CliCommand> = {
   watch: "watch",
   "check-update": "check-update",
   update: "update",
+  run: "run",
+  r: "run",
+  trace: "trace",
 };
 
 type BooleanFlagKey =
@@ -68,7 +76,8 @@ type BooleanFlagKey =
   | "occupied"
   | "kill"
   | "noColor"
-  | "interactive";
+  | "interactive"
+  | "tree";
 
 const BOOLEAN_FLAGS: Record<string, BooleanFlagKey> = {
   "--json": "json",
@@ -92,6 +101,8 @@ const BOOLEAN_FLAGS: Record<string, BooleanFlagKey> = {
   "--interactive": "interactive",
   "-i": "interactive",
   "-I": "interactive",
+  "--tree": "tree",
+  "-t": "tree",
 };
 
 function readOptionValue(
@@ -142,10 +153,16 @@ function readNumericOption(
 export function parseCliArgs(argv: readonly string[]): ParsedArgs {
   const flags: ParsedArgs["flags"] = {};
   const rawPositionals: string[] = [];
+  let runCommand: string[] | undefined;
   const cursor = { index: 0 };
 
   for (; cursor.index < argv.length; cursor.index++) {
     const arg = argv[cursor.index]!;
+
+    if (arg === "--") {
+      runCommand = argv.slice(cursor.index + 1);
+      break;
+    }
 
     const boolFlag = BOOLEAN_FLAGS[arg];
     if (boolFlag) {
@@ -177,6 +194,12 @@ export function parseCliArgs(argv: readonly string[]): ParsedArgs {
       continue;
     }
 
+    const cwdVal = readOptionValue("cwd", arg, argv, cursor);
+    if (cwdVal !== undefined) {
+      flags.cwd = cwdVal;
+      continue;
+    }
+
     if (arg.startsWith("-")) {
       throw new Error(`unknown option "${arg}"`);
     }
@@ -185,23 +208,44 @@ export function parseCliArgs(argv: readonly string[]): ParsedArgs {
   }
 
   if (rawPositionals.length === 0) {
-    return { positionals: [], flags };
+    return { positionals: [], flags, runCommand };
   }
 
   const first = rawPositionals[0]!;
   if (first in COMMAND_ALIASES) {
+    const cmd = COMMAND_ALIASES[first];
+    let positionals = rawPositionals.slice(1);
+
+    if (cmd === "run" && !runCommand && positionals.length > 0) {
+      const portPos: string[] = [];
+      const cmdPos: string[] = [];
+      let foundCommand = false;
+      for (const p of positionals) {
+        if (!foundCommand && (/^\d+(?:-\d+)?$/.test(p) || p.includes(","))) {
+          portPos.push(p);
+        } else {
+          foundCommand = true;
+          cmdPos.push(p);
+        }
+      }
+      if (cmdPos.length > 0) {
+        positionals = portPos;
+        runCommand = cmdPos;
+      }
+    }
+
     return {
-      command: COMMAND_ALIASES[first],
-      positionals: rawPositionals.slice(1),
+      command: cmd,
+      positionals,
+      runCommand,
       flags,
     };
   }
 
-  // Shorthand: numeric or port range positionals default to "kill"
-  // e.g. killx 3000 -> kill 3000
   return {
     command: "kill",
     positionals: rawPositionals,
+    runCommand,
     flags,
   };
 }
