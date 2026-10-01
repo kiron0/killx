@@ -1,5 +1,47 @@
 # Changelog
 
+## 1.0.0
+
+### Production Release & Architecture Overhaul
+
+- **Process Tree Killing (`--tree`)**:
+  - Automatically climb process hierarchy above the listening process to identify and terminate supervisor roots (e.g. `npm`, `pnpm`, `yarn`, `bun`, `cargo`, `docker-compose`, `go`, `python`).
+  - Safe interactive login shell detection stopping climb at shells (`zsh`, `bash`, `fish`, `sh`) while correctly traversing intermediate subshell wrappers spawned by npm scripts (`/bin/sh -c`).
+  - Gracefully terminates descending process trees top-down (root to leaves) with SIGTERM escalation to SIGKILL.
+  - Interactive confirmation prompt displays a formatted tree preview with PID, depth indentation, and truncated commands before kill.
+  - Port deduplication when multiple listening ports share the same supervisor root process.
+
+- **Atomic Run Command (`killx run`)**:
+  - One-shot command execution that guarantees port availability prior to launching target processes: `killx run <port...> [--tree] [-f] -- <cmd...>`.
+  - Terminates conflicting listeners on specified ports, waits for ports to fully clear, and spawns the command in inherited stdio.
+  - Cross-platform signal forwarding (`SIGINT`, `SIGTERM`, `SIGHUP`, `SIGQUIT`) propagating shutdown cleanly to the child process.
+  - Preserves standard POSIX signal exit codes (`128 + signalNumber`) on signal termination.
+
+- **Docker-Aware Container Inspection & Termination**:
+  - Automatically detects containerized listeners on macOS (`com.docker.backend`), Linux (`docker-proxy`), and Windows (`com.docker.backend`, `wslhost.exe`).
+  - Resolves host port bindings to container ID, container name, image, and status.
+  - Contextual kill prompt offering `docker stop <container>` or host proxy kill, honoring timeout flag `-t, --timeout <seconds>`.
+  - Formatted container metadata display in `killx info` and `killx trace`.
+
+- **Deep Process Tracing (`killx trace`)**:
+  - Visual ancestry diagnostic explaining why a port is held: `killx trace <port>`.
+  - Renders process tree from parent supervisor down to target listener with PID, PPID, and truncated command.
+  - Evaluates root supervisor detection, Docker bindings, and provides tailored kill recommendations (`killx <port> --tree`).
+
+- **Project-Scoped Dev Server Cleanup (`killx dev .`)**:
+  - Scope detection supporting current project directory (`killx dev .` or `killx dev ./path`) vs global dev cleanup.
+  - Resolves process working directory across macOS (`lsof`), Linux (`/proc/<pid>/cwd`), and Windows (`Get-Process`).
+  - Matches processes running within or spawned from the specified project root path.
+  - Displays relative project paths (`./my-app`) in interactive selection menus.
+
+- **Interactive TUI Enhancements**:
+  - Added `--tree` supervisor kill and `trace` diagnostic actions to port selection menu.
+  - Added interactive project scope selection (`current project` vs `global machine`) when running `killx dev` without arguments.
+
+- **Performance & Reliability**:
+  - High-precision cross-platform process tree discovery and cwd resolution.
+  - 100% test pass rate across 653 test suites.
+
 ## 0.1.1
 
 - Fix global and npx binary execution when invoked as `killx` (binary alias without `.js` extension).

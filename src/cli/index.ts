@@ -57,7 +57,7 @@ export async function getPackageVersion(): Promise<string> {
       if (parsed.version) return parsed.version;
     } catch {}
   }
-  return "0.1.1";
+  return "1.0.0";
 }
 
 export function printHelp(printer: Printer): void {
