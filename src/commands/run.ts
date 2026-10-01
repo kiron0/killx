@@ -128,20 +128,41 @@ export async function runRunCommand(
 
     const sigintHandler = () => forwardSignal("SIGINT");
     const sigtermHandler = () => forwardSignal("SIGTERM");
+    const sighupHandler = () => forwardSignal("SIGHUP");
+    const sigquitHandler = () => forwardSignal("SIGQUIT");
 
     process.on("SIGINT", sigintHandler);
     process.on("SIGTERM", sigtermHandler);
+    process.on("SIGHUP", sighupHandler);
+    process.on("SIGQUIT", sigquitHandler);
 
-    child.on("error", (err) => {
+    const cleanup = () => {
       process.removeListener("SIGINT", sigintHandler);
       process.removeListener("SIGTERM", sigtermHandler);
+      process.removeListener("SIGHUP", sighupHandler);
+      process.removeListener("SIGQUIT", sigquitHandler);
+    };
+
+    child.on("error", (err) => {
+      cleanup();
       reject(err);
     });
 
-    child.on("exit", (code) => {
-      process.removeListener("SIGINT", sigintHandler);
-      process.removeListener("SIGTERM", sigtermHandler);
-      resolve(code ?? 0);
+    child.on("exit", (code, signal) => {
+      cleanup();
+      if (code !== null) {
+        resolve(code);
+      } else if (signal === "SIGINT") {
+        resolve(130);
+      } else if (signal === "SIGTERM") {
+        resolve(143);
+      } else if (signal === "SIGHUP") {
+        resolve(129);
+      } else if (signal === "SIGQUIT") {
+        resolve(131);
+      } else {
+        resolve(1);
+      }
     });
   });
 }

@@ -156,5 +156,53 @@ describe("killx run workflow", () => {
       expect(output).toContain("Port :3000 occupied. Freeing listener(s)...");
       expect(output).toContain("Running: next dev");
     });
+
+    it("returns 130 when child process exits with SIGINT", async () => {
+      const printer = new Printer();
+      const provider: PlatformProvider = {
+        list: () => Promise.resolve([]),
+        find: () => Promise.resolve([]),
+      };
+
+      const mockChild = Object.assign(new EventEmitter(), { kill: vi.fn() });
+      const mockSpawn = vi.fn().mockImplementation(() => {
+        setTimeout(() => mockChild.emit("exit", null, "SIGINT"), 10);
+        return mockChild;
+      });
+
+      const code = await runRunCommand({
+        ports: [3000],
+        command: ["npm", "run", "dev"],
+        provider,
+        printer,
+        spawnRunner: mockSpawn as SpawnRunner,
+      });
+
+      expect(code).toBe(130);
+    });
+
+    it("returns 143 when child process exits with SIGTERM", async () => {
+      const printer = new Printer();
+      const provider: PlatformProvider = {
+        list: () => Promise.resolve([]),
+        find: () => Promise.resolve([]),
+      };
+
+      const mockChild = Object.assign(new EventEmitter(), { kill: vi.fn() });
+      const mockSpawn = vi.fn().mockImplementation(() => {
+        setTimeout(() => mockChild.emit("exit", null, "SIGTERM"), 10);
+        return mockChild;
+      });
+
+      const code = await runRunCommand({
+        ports: [3000],
+        command: ["npm", "run", "dev"],
+        provider,
+        printer,
+        spawnRunner: mockSpawn as SpawnRunner,
+      });
+
+      expect(code).toBe(143);
+    });
   });
 });

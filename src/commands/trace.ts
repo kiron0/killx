@@ -5,6 +5,10 @@ import {
   getProcessAncestry,
   getSupervisorRoot,
 } from "../process/tree";
+import {
+  findDockerContainerForPort,
+  isDockerProcess,
+} from "../platform/docker";
 import { defaultCommandRunner, type CommandRunner } from "../platform/command";
 import type { PlatformProvider } from "../types";
 import type { Printer } from "../output";
@@ -28,13 +32,23 @@ export async function runTraceCommand(
   }
 
   const listener = matches[0]!;
-  const ancestry = await getProcessAncestry(listener.pid, runner);
+  const ancestry = await getProcessAncestry(listener.pid, runner, undefined, {
+    fullInfo: true,
+  });
   const supervisor = getSupervisorRoot(ancestry);
+
+  const hasDockerHint = matches.some((m) =>
+    isDockerProcess(m.process, m.command),
+  );
+  const dockerInfo = hasDockerHint
+    ? await findDockerContainerForPort(port, runner)
+    : null;
 
   if (printer.json) {
     printer.encode({
       port,
       found: true,
+      ...(dockerInfo ? { docker: dockerInfo } : {}),
       listener: {
         port,
         pid: listener.pid,
@@ -59,7 +73,13 @@ export async function runTraceCommand(
   const treeText = formatTraceTree(port, ancestry);
   printer.line(treeText);
 
-  if (supervisor && supervisor.pid !== listener.pid) {
+  if (dockerInfo) {
+    printer.line("");
+    printer.line(
+      `Docker container detected: ${dockerInfo.name} (image: ${dockerInfo.image})`,
+    );
+    printer.line(`To stop the container safely, run: killx ${port}`);
+  } else if (supervisor && supervisor.pid !== listener.pid) {
     printer.line("");
     printer.line(
       `Supervisor detected: ${supervisor.name} (PID ${supervisor.pid})`,

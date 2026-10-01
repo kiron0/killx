@@ -122,6 +122,42 @@ describe("Project-scoped dev server killing", () => {
       );
       expect(result).toBe(false);
     });
+
+    it("returns true when ancestor process belongs to project root", async () => {
+      const proc: ProcessInfo = {
+        pid: 104,
+        port: 3004,
+        process: "node",
+        user: "test",
+        command: "node",
+        protocol: "tcp",
+        state: "listen",
+      };
+      const mockRunner: CommandRunner = vi
+        .fn()
+        .mockImplementation((cmd: string, args: readonly string[]) => {
+          if (cmd === "ps") {
+            return Promise.resolve(
+              [
+                "   500      1 test     npm        npm run dev",
+                "   104    500 test     node       node",
+              ].join("\n"),
+            );
+          }
+          if (cmd === "lsof" && args.includes("500")) {
+            return Promise.resolve("p500\nfcwd\nn" + projectRoot + "\n");
+          }
+          return Promise.resolve("");
+        });
+
+      const result = await processBelongsToProject(
+        proc,
+        "",
+        projectRoot,
+        mockRunner,
+      );
+      expect(result).toBe(true);
+    });
   });
 
   describe("runDevCommand with project scoping", () => {

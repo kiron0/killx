@@ -16,18 +16,7 @@ export interface ProcessRawInfo {
   user?: string | undefined;
 }
 
-const SHELL_OR_ROOT_NAMES = new Set([
-  "sh",
-  "bash",
-  "zsh",
-  "fish",
-  "csh",
-  "tcsh",
-  "dash",
-  "ksh",
-  "ion",
-  "nu",
-  "xonsh",
+export const TERMINAL_OR_INIT_NAMES = new Set([
   "launchd",
   "systemd",
   "init",
@@ -41,15 +30,53 @@ const SHELL_OR_ROOT_NAMES = new Set([
   "terminal",
   "gnome-terminal",
   "code",
+  "explorer",
+  "explorer.exe",
+  "system",
+  "wt",
+  "wt.exe",
+]);
+
+export const SHELL_NAMES = new Set([
+  "sh",
+  "bash",
+  "zsh",
+  "fish",
+  "csh",
+  "tcsh",
+  "dash",
+  "ksh",
+  "ion",
+  "nu",
+  "xonsh",
   "cmd",
   "cmd.exe",
   "powershell",
   "powershell.exe",
   "pwsh",
   "pwsh.exe",
-  "explorer",
-  "explorer.exe",
 ]);
+
+const SHELL_OR_ROOT_NAMES = new Set([
+  ...TERMINAL_OR_INIT_NAMES,
+  ...SHELL_NAMES,
+]);
+
+export function isTerminalOrInit(name: string): boolean {
+  const base = name
+    .toLowerCase()
+    .replace(/^.*\//, "")
+    .replace(/\.exe$/, "");
+  return TERMINAL_OR_INIT_NAMES.has(base);
+}
+
+export function isShell(name: string): boolean {
+  const base = name
+    .toLowerCase()
+    .replace(/^.*\//, "")
+    .replace(/\.exe$/, "");
+  return SHELL_NAMES.has(base);
+}
 
 export function isShellOrRoot(name: string): boolean {
   const base = name
@@ -176,10 +203,15 @@ export async function getAllProcesses(
   return map;
 }
 
+export interface GetProcessAncestryOptions {
+  fullInfo?: boolean | undefined;
+}
+
 export async function getProcessAncestry(
   listenerPid: number,
   runner: CommandRunner = defaultCommandRunner,
   procMap?: Map<number, ProcessRawInfo>,
+  options?: GetProcessAncestryOptions,
 ): Promise<ProcessTreeNode[]> {
   const processMap = procMap ?? (await getAllProcesses(runner));
   const ancestry: ProcessTreeNode[] = [];
@@ -203,14 +235,26 @@ export async function getProcessAncestry(
 
     ancestry.push(node);
 
-    if (isShellOrRoot(raw.name)) {
+    if (isTerminalOrInit(raw.name) || raw.ppid <= 1) {
       break;
+    }
+
+    if (isShell(raw.name)) {
+      const parent = processMap.get(raw.ppid);
+      if (!parent || parent.pid <= 1 || isTerminalOrInit(parent.name)) {
+        break;
+      }
     }
 
     curr = raw.ppid;
   }
 
-  if (ancestry.length > 0) {
+  if (options?.fullInfo) {
+    for (const node of ancestry) {
+      node.cwd = await getCwdForPid(node.pid, runner);
+      node.startTime = await getStartTimeForPid(node.pid, runner);
+    }
+  } else if (ancestry.length > 0) {
     const listenerNode = ancestry[0]!;
     listenerNode.cwd = await getCwdForPid(listenerNode.pid, runner);
     listenerNode.startTime = await getStartTimeForPid(listenerNode.pid, runner);
@@ -225,7 +269,13 @@ export function getSupervisorRoot(
   if (ancestry.length === 0) return null;
   for (let i = ancestry.length - 1; i >= 0; i--) {
     const node = ancestry[i]!;
-    if (!isShellOrRoot(node.name) && node.pid > 1) {
+    if (!isShell(node.name) && !isTerminalOrInit(node.name) && node.pid > 1) {
+      return node;
+    }
+  }
+  for (let i = ancestry.length - 1; i >= 0; i--) {
+    const node = ancestry[i]!;
+    if (!isTerminalOrInit(node.name) && node.pid > 1) {
       return node;
     }
   }
@@ -259,31 +309,42 @@ export function formatTreePreview(
   listenerPid: number,
 ): string {
   if (ancestry.length === 0) return "";
-  let rootIndex = -1;
-  for (let i = ancestry.length - 1; i >= 0; i--) {
-    if (!isShellOrRoot(ancestry[i]!.name)) {
-      rootIndex = i;
-      break;
+  const supervisor = getSupervisorRoot(ancestry);
+  const supervisorIndex = supervisor
+    ? ancestry.findIndex((n) => n.pid === supervisor.pid)
+    : -1;
+
+  const relevant =
+    supervisorIndex !== -1
+      ? ancestry.slice(0, supervisorIndex + 1)
+      : ancestry.filter((n) => !isShellOrRoot(n.name) || n.pid === listenerPid);
+
+  const rawChain = [...relevant].reverse();
+  const chain = rawChain.filter((node, idx) => {
+    if (node.pid === listenerPid) return true;
+    if (supervisor && node.pid === supervisor.pid) return true;
+    if (isShell(node.name)) {
+      const prev = rawChain[idx - 1];
+      const next = rawChain[idx + 1];
+      if (prev && next && !isShell(prev.name) && !isShell(next.name)) {
+        return false;
+      }
     }
-  }
-  const chain =
-    rootIndex !== -1
-      ? ancestry.slice(0, rootIndex + 1).reverse()
-      : [...ancestry].reverse();
+    return true;
+  });
 
   const lines: string[] = [];
+  const targetCol = 11;
   chain.forEach((node, index) => {
     const isListener = node.pid === listenerPid;
-    const namePadded = node.name.padEnd(10);
     const pidStr = String(node.pid);
     const listenerTag = isListener ? "  ← listener" : "";
 
-    if (index === 0) {
-      lines.push(`${namePadded} ${pidStr}${listenerTag}`);
-    } else {
-      const indent = "   ".repeat(index - 1);
-      lines.push(`${indent}└─ ${namePadded} ${pidStr}${listenerTag}`);
-    }
+    const prefix =
+      index === 0 ? node.name : `${"   ".repeat(index - 1)}└─ ${node.name}`;
+
+    const padLen = Math.max(targetCol, prefix.length + 1);
+    lines.push(`${prefix.padEnd(padLen)}${pidStr}${listenerTag}`);
   });
 
   return lines.join("\n");
@@ -296,12 +357,26 @@ export function formatTraceTree(
   if (ancestry.length === 0) return `:${port}\n(no process tree found)`;
   const lines: string[] = [`:${port}`];
 
-  ancestry.forEach((node, index) => {
+  const chain = ancestry.filter((node, idx) => {
+    if (node.isListener) return true;
+    if (isShell(node.name)) {
+      const prev = ancestry[idx - 1];
+      const next = ancestry[idx + 1];
+      if (prev && next && !isShell(prev.name) && !isShell(next.name)) {
+        return false;
+      }
+    }
+    return true;
+  });
+
+  chain.forEach((node, index) => {
     const indent = "   ".repeat(index);
-    const namePadded = node.command
-      ? node.command.slice(0, 24).padEnd(20)
-      : node.name.padEnd(20);
-    lines.push(`${indent}└─ ${namePadded} PID ${node.pid}`);
+    const displayCmd = node.command
+      ? node.command.slice(0, 32).trim()
+      : node.name;
+    const namePadded = displayCmd.padEnd(20);
+    const ppidPart = node.ppid > 0 ? `  PPID ${node.ppid}` : "";
+    lines.push(`${indent}└─ ${namePadded} PID ${node.pid}${ppidPart}`);
     if (node.cwd) {
       const displayCwd = node.cwd.replace(homedir(), "~");
       lines.push(`${indent}   cwd: ${displayCwd}`);

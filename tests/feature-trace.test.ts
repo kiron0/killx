@@ -39,6 +39,7 @@ describe("killx trace command", () => {
       const text = formatTraceTree(3000, ancestry);
       expect(text).toContain(":3000");
       expect(text).toContain("PID 9214");
+      expect(text).toContain("PPID 9191");
       expect(text).toContain("cwd:");
       expect(text).toContain("PID 9191");
       expect(text).toContain("PID 9177");
@@ -147,6 +148,53 @@ describe("killx trace command", () => {
       expect(parsed.found).toBe(true);
       expect(parsed.listener.pid).toBe(9214);
       expect(Array.isArray(parsed.tree)).toBe(true);
+    });
+
+    it("identifies Docker container in trace output", async () => {
+      const lines: string[] = [];
+      const printer = new Printer({ writer: (s) => lines.push(s) });
+
+      const provider: PlatformProvider = {
+        list: () => Promise.resolve([]),
+        find: () =>
+          Promise.resolve([
+            {
+              pid: 4567,
+              port: 5432,
+              process: "com.docker.backend",
+              user: "user",
+              command: "com.docker.backend",
+              protocol: "tcp",
+              state: "listen",
+            },
+          ]),
+      };
+
+      const mockRunner = vi.fn((cmd: string, args: readonly string[]) => {
+        if (cmd === "docker" && args[0] === "ps") {
+          return Promise.resolve(
+            JSON.stringify({
+              ID: "c123",
+              Names: "postgres-dev",
+              Image: "postgres:17",
+              Ports: "0.0.0.0:5432->5432/tcp",
+            }),
+          );
+        }
+        if (cmd === "ps") {
+          return Promise.resolve("  4567      1 user     com.docker.backend\n");
+        }
+        return Promise.resolve("");
+      });
+
+      await runTraceCommand("5432", provider, printer, mockRunner);
+
+      const text = lines.join("\n");
+      expect(text).toContain(":5432");
+      expect(text).toContain(
+        "Docker container detected: postgres-dev (image: postgres:17)",
+      );
+      expect(text).toContain("killx 5432");
     });
   });
 });

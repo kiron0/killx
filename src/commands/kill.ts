@@ -20,7 +20,12 @@ import {
   stopDockerContainer,
 } from "../platform/docker";
 import { defaultCommandRunner, type CommandRunner } from "../platform/command";
-import type { KillResult, PlatformProvider, ProcessInfo } from "../types";
+import type {
+  KillResult,
+  PlatformProvider,
+  ProcessInfo,
+  SignalName,
+} from "../types";
 import type { Printer } from "../output";
 
 export interface RunKillOptions {
@@ -129,7 +134,14 @@ export async function runKill(options: RunKillOptions): Promise<void> {
       }
 
       try {
-        await stopDockerContainer(dockerInfo.name, force, runner);
+        const dockerTimeoutSec =
+          timeoutMs > 0 ? Math.round(timeoutMs / 1000) : undefined;
+        await stopDockerContainer(
+          dockerInfo.name,
+          force,
+          runner,
+          dockerTimeoutSec,
+        );
         results.push({
           success: true,
           port,
@@ -158,6 +170,8 @@ export async function runKill(options: RunKillOptions): Promise<void> {
   );
 
   if (tree && remainingTargets.length > 0) {
+    const killedSupervisors = new Map<number, SignalName>();
+
     for (const target of remainingTargets) {
       const ancestry = await getProcessAncestry(target.pid, runner);
       const supervisor = getSupervisorRoot(ancestry) ?? {
@@ -166,6 +180,18 @@ export async function runKill(options: RunKillOptions): Promise<void> {
         command: target.command,
         ppid: 1,
       };
+
+      if (killedSupervisors.has(supervisor.pid)) {
+        const existingSignal = killedSupervisors.get(supervisor.pid)!;
+        results.push({
+          success: true,
+          port: target.port,
+          pid: supervisor.pid,
+          process: supervisor.name,
+          signal: existingSignal,
+        });
+        continue;
+      }
 
       if (!yes) {
         if (process.stdin.isTTY && process.stdout.isTTY) {
@@ -194,6 +220,7 @@ export async function runKill(options: RunKillOptions): Promise<void> {
           { force, timeoutMs },
           runner,
         );
+        killedSupervisors.set(supervisor.pid, signal);
         results.push({
           success: true,
           port: target.port,
@@ -296,17 +323,18 @@ export async function runKill(options: RunKillOptions): Promise<void> {
       lastError?.includes("Operation not permitted") ||
       lastError?.includes("Access is denied");
 
+    const pidLabel = firstFailed.pid ? ` (PID ${firstFailed.pid})` : "";
     if (isPerm) {
       const msg =
         results.length === 1
-          ? `✗ Permission denied while terminating ${firstFailed.process} (PID ${firstFailed.pid})\n\nTry:\n  sudo killx ${firstFailed.port}`
+          ? `✗ Permission denied while terminating ${firstFailed.process}${pidLabel}\n\nTry:\n  sudo killx ${firstFailed.port}`
           : "✗ Permission denied while terminating process\n\nTry:\n  sudo killx <port>";
       throw new CliError(EXIT_PERMISSION, msg, lastError);
     }
 
     const msg =
       results.length === 1
-        ? `✗ ${firstFailed.process} (PID ${firstFailed.pid}) did not exit\n\nTry:\n  killx ${firstFailed.port} --force`
+        ? `✗ ${firstFailed.process}${pidLabel} did not exit\n\nTry:\n  killx ${firstFailed.port} --force`
         : "✗ Process could not be terminated; retry with --force";
     throw new CliError(EXIT_TERMINATION, msg, lastError);
   }

@@ -107,8 +107,8 @@ describe("Process tree inspection and killing", () => {
 
       const preview = formatTreePreview(ancestry, 1264);
       expect(preview).toContain("npm        1240");
-      expect(preview).toContain("└─ next       1251");
-      expect(preview).toContain("└─ node       1264  ← listener");
+      expect(preview).toContain("└─ next    1251");
+      expect(preview).toContain("   └─ node 1264  ← listener");
     });
   });
 
@@ -226,6 +226,127 @@ describe("Process tree inspection and killing", () => {
       expect(text).toContain(
         "Killed process tree for :3000 (root npm PID 1240)",
       );
+    });
+
+    it("traverses through intermediate sh subshell to discover npm supervisor", async () => {
+      const { getProcessAncestry } = await import("../src/process/tree");
+      const mockRunner: CommandRunner = vi
+        .fn()
+        .mockImplementation((cmd: string) => {
+          if (cmd === "ps") {
+            return Promise.resolve(
+              [
+                "   800      1 kiron    iterm2     /Applications/iTerm.app",
+                "  1100    800 kiron    zsh        -zsh",
+                "  1240   1100 kiron    npm        npm run dev",
+                "  1245   1240 kiron    sh         sh -c next dev",
+                "  1251   1245 kiron    next       next dev",
+                "  1264   1251 kiron    node       node server.js",
+              ].join("\n"),
+            );
+          }
+          return Promise.resolve("");
+        });
+
+      const ancestry = await getProcessAncestry(1264, mockRunner);
+      const supervisor = getSupervisorRoot(ancestry);
+
+      expect(supervisor).not.toBeNull();
+      expect(supervisor?.name).toBe("npm");
+      expect(supervisor?.pid).toBe(1240);
+      expect(ancestry.map((n) => n.name)).toEqual([
+        "node",
+        "next",
+        "sh",
+        "npm",
+        "zsh",
+      ]);
+    });
+
+    it("deduplicates supervisor tree termination across multiple ports", async () => {
+      const lines: string[] = [];
+      const printer = new Printer({
+        writer: (s) => lines.push(s),
+      });
+
+      const provider: PlatformProvider = {
+        list: () => Promise.resolve([]),
+        find: (p) => {
+          if (p === 3000) {
+            return Promise.resolve([
+              {
+                pid: 1264,
+                port: 3000,
+                process: "node",
+                user: "kiron",
+                command: "node server.js",
+                protocol: "tcp",
+                state: "listen",
+              },
+            ]);
+          }
+          if (p === 3001) {
+            return Promise.resolve([
+              {
+                pid: 1265,
+                port: 3001,
+                process: "node",
+                user: "kiron",
+                command: "node worker.js",
+                protocol: "tcp",
+                state: "listen",
+              },
+            ]);
+          }
+          return Promise.resolve([]);
+        },
+      };
+
+      const mockRunner: CommandRunner = vi
+        .fn()
+        .mockImplementation((cmd: string) => {
+          if (cmd === "ps") {
+            return Promise.resolve(
+              [
+                "  1240      1 kiron    npm        npm run dev",
+                "  1251   1240 kiron    next       next dev",
+                "  1264   1251 kiron    node       node server.js",
+                "  1265   1251 kiron    node       node worker.js",
+              ].join("\n"),
+            );
+          }
+          return Promise.resolve("");
+        });
+
+      let killCount = 0;
+      const killSpy = vi
+        .spyOn(process, "kill")
+        .mockImplementation((pid, sig) => {
+          if (sig === 0 && killCount > 0) {
+            throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
+          }
+          if (sig !== 0) {
+            killCount++;
+          }
+          return true;
+        });
+
+      await runKill({
+        ports: [3000, 3001],
+        tree: true,
+        yes: true,
+        provider,
+        printer,
+        runner: mockRunner,
+      });
+
+      killSpy.mockRestore();
+
+      const text = lines.join("\n");
+      expect(text).toContain(
+        "Killed process tree for :3000 (root npm PID 1240)",
+      );
+      expect(text).toContain("Killed 2 processes");
     });
   });
 });

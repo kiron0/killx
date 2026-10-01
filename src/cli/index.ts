@@ -364,8 +364,30 @@ async function runInteractiveCommandMenu(
     }
 
     if (chosen === "dev") {
+      const scope = await select({
+        message: "Select cleanup scope:",
+        options: [
+          {
+            value: "project",
+            label: "Current project directory",
+            hint: "scope dev server clean to current project/git root",
+          },
+          {
+            value: "global",
+            label: "Global (all dev servers)",
+            hint: "terminate dev processes across system",
+          },
+        ],
+        initialValue: "project",
+      });
+      if (isCancel(scope)) {
+        cancel("Cancelled.");
+        printThanks();
+        return EXIT_SUCCESS;
+      }
       try {
         await runDevCommand({
+          cwd: scope === "project" ? (flags.cwd ?? ".") : undefined,
           force: flags.force,
           yes: flags.yes,
           provider,
@@ -588,6 +610,16 @@ async function runInteractiveMenu(
           label: "Force kill processes",
           hint: "SIGKILL immediately",
         },
+        {
+          value: "tree",
+          label: "Kill process tree & supervisor",
+          hint: "--tree: stops auto-respawn loops",
+        },
+        {
+          value: "trace",
+          label: "Trace process ancestry",
+          hint: "explain who owns or restarts port",
+        },
         { value: "info", label: "Inspect listener details" },
         { value: "check", label: "Check availability" },
       ],
@@ -596,6 +628,28 @@ async function runInteractiveMenu(
 
     if (isCancel(action)) {
       cancel("Cancelled.");
+      printThanks();
+      return EXIT_SUCCESS;
+    }
+
+    if (action === "tree") {
+      await runKill({
+        ports: selectedPorts,
+        tree: true,
+        force: Boolean(flags.force),
+        yes: flags.yes,
+        timeoutMs: (flags.timeout ?? 0) * 1000,
+        provider,
+        printer,
+      });
+      printThanks();
+      return EXIT_SUCCESS;
+    }
+
+    if (action === "trace") {
+      for (const port of selectedPorts) {
+        await runTraceCommand(String(port), provider, printer);
+      }
       printThanks();
       return EXIT_SUCCESS;
     }

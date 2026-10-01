@@ -7,8 +7,10 @@ export function isDockerProcess(processName: string, command = ""): boolean {
   return (
     name.includes("docker") ||
     name.includes("vpnkit") ||
+    name.includes("wslhost") ||
     cmd.includes("docker-proxy") ||
-    cmd.includes("com.docker.backend")
+    cmd.includes("com.docker.backend") ||
+    cmd.includes("wslhost")
   );
 }
 
@@ -115,7 +117,16 @@ export async function stopDockerContainer(
   container: string,
   force = false,
   runner: CommandRunner = defaultCommandRunner,
+  timeoutSeconds?: number,
 ): Promise<void> {
-  const cmd = force ? "kill" : "stop";
-  await runner("docker", [cmd, container]);
+  if (force) {
+    await runner("docker", ["kill", container]);
+    return;
+  }
+  const args = ["stop"];
+  if (timeoutSeconds !== undefined && timeoutSeconds > 0) {
+    args.push("-t", String(timeoutSeconds));
+  }
+  args.push(container);
+  await runner("docker", args);
 }

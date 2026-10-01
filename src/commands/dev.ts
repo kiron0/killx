@@ -132,8 +132,9 @@ export async function processBelongsToProject(
     const ancestry = await getProcessAncestry(proc.pid, runner);
     for (const ancestor of ancestry) {
       if (ancestor.pid === proc.pid) continue;
-      if (ancestor.cwd) {
-        const normAncCwd = normalizePath(ancestor.cwd);
+      const ancCwd = ancestor.cwd || (await getCwdForPid(ancestor.pid, runner));
+      if (ancCwd) {
+        const normAncCwd = normalizePath(ancCwd);
         if (normAncCwd === normRoot || normAncCwd.startsWith(`${normRoot}/`)) {
           return true;
         }
@@ -142,7 +143,8 @@ export async function processBelongsToProject(
         const normAncCmd = normalizePath(ancestor.command);
         if (
           normAncCmd.includes(normRoot) ||
-          normAncCmd.includes(`/${projectName}/`)
+          normAncCmd.includes(`/${projectName}/`) ||
+          normAncCmd.includes(`./${projectName}`)
         ) {
           return true;
         }
@@ -208,9 +210,11 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
 
     const rel = procCwd ? relative(process.cwd(), procCwd) : "";
     const displayPath = procCwd
-      ? rel.startsWith(".")
-        ? rel
-        : `./${rel}`
+      ? !rel || rel === "."
+        ? `./${projectName}`
+        : rel.startsWith(".")
+          ? rel
+          : `./${rel}`
       : `./${projectName}`;
 
     const matchInfo: DevProcessMatch = {
